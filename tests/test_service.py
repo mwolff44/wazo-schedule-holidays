@@ -41,6 +41,8 @@ class Env:
         self.storage = ConfigStorage(tmp_path / "holidays")
         self.today_calls = []
         self.default_tz_calls = 0
+        self.commits = 0
+        self.fail_commit = None
         self.service = HolidaysService(
             self.schedules,
             self.storage,
@@ -48,7 +50,13 @@ class Env:
             default_timezone=self._default_timezone,
             today=self._today,
             provider=provider or self._table_provider,
+            commit=self._commit,
         )
+
+    def _commit(self):
+        if self.fail_commit:
+            raise self.fail_commit
+        self.commits += 1
 
     def _table_provider(self, country, subdivision, year):
         return self.table.get(year, [])
@@ -392,3 +400,71 @@ def test_real_calendar_closes_dutch_easter_monday(real_env):
 
     assert (3, 29) in real_env.days()
     assert (12, 25) in real_env.days()
+
+
+def test_commit_happens_between_the_schedule_edit_and_the_final_file_write(env):
+    env.configure()
+    log = []
+    real_save = env.storage.save
+    real_edit = env.schedules.edit
+    env.storage.save = lambda *args: (log.append("save"), real_save(*args))
+    env.schedules.edit = lambda *args, **kw: (
+        log.append("edit"),
+        real_edit(*args, **kw),
+    )
+    env.service._commit = lambda: log.append("commit")
+
+    env.service.sync(1, None)
+
+    assert log == ["save", "edit", "commit", "save"]
+
+
+def test_failed_commit_keeps_the_intent_and_the_next_sync_recovers(env):
+    env.configure()
+    env.fail_commit = RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError):
+        env.service.sync(1, None)
+    intent = env.storage.load(1, TENANT).managed
+    env.fail_commit = None
+    env.service.sync(1, None)
+
+    assert [entry.key for entry in intent] == ["B", "C", "D"]
+    assert len(env.schedule.exceptional_periods) == 3
+
+
+def test_failed_commit_on_removal_keeps_the_removed_dates_managed(env):
+    env.configure()
+    env.service.sync(1, None)
+    env.table[2026] = [Holiday("C", "C", D(2026, 12, 25))]
+    env.fail_commit = RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError):
+        env.service.sync(1, None)
+    still_managed = {entry.day for entry in env.storage.load(1, TENANT).managed}
+    env.fail_commit = None
+    env.service.sync(1, None)
+
+    assert (11, 18) in still_managed
+    assert env.days() == [(3, 29), (12, 25)]
+
+
+def test_delete_config_commits_before_removing_the_file(env):
+    env.configure()
+    env.service.sync(1, None)
+    env.fail_commit = RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError):
+        env.service.delete_config(1, None)
+
+    assert env.storage.load(1, TENANT) is not None
+
+
+def test_no_commit_when_the_periods_do_not_change(env):
+    env.configure()
+    env.service.sync(1, None)
+    commits = env.commits
+
+    env.service.sync(1, None)
+
+    assert env.commits == commits

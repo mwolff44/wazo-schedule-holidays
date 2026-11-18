@@ -9,8 +9,10 @@ Nothing is imported from Wazo: the confd schedule service, the period class
 
 Crash safety: the JSON file is written *before* the schedule is modified with
 the union of the old and new managed dates, then rewritten once the schedule is
-saved. Whatever fails in between, every period created by the plugin is listed
-in the file, so none can be left orphaned.
+saved *and committed*, so the final file only reflects what is really in the
+database (confd normally commits after the request, hence the injected
+``commit``). Whatever fails in between, every period created by the plugin is
+listed in the file, so none can be left orphaned.
 """
 
 from __future__ import annotations
@@ -69,6 +71,7 @@ class HolidaysService:
         default_timezone: Callable[[], str | None],
         today: Callable[[str | None], datetime.date] = local_today,
         provider: Provider = holidays_for,
+        commit: Callable[[], None] = lambda: None,
     ) -> None:
         self._schedules = schedule_service
         self._storage = storage
@@ -76,6 +79,7 @@ class HolidaysService:
         self._default_timezone = default_timezone
         self._today = today
         self._provider = provider
+        self._commit = commit
 
     def get_config(
         self, schedule_id: int, tenant_uuids: list[str] | None
@@ -114,6 +118,7 @@ class HolidaysService:
             plan = plan_sync(existing, config.managed, [], destination)
             if plan.remove:
                 self._write_periods(schedule, existing, plan, destination)
+                self._commit()
             self._storage.delete(schedule_id)
 
     def sync(
@@ -149,15 +154,17 @@ class HolidaysService:
         if dry_run or not plan.changed:
             return result
 
-        tenant_uuid = schedule.tenant_uuid
+        # The ORM objects expire on commit: read what is needed beforehand.
+        schedule_id, tenant_uuid = schedule.id, schedule.tenant_uuid
         intent = list(dict.fromkeys([*config.managed, *plan.managed]))
         self._storage.save(
-            schedule.id, tenant_uuid, dataclasses.replace(config, managed=intent)
+            schedule_id, tenant_uuid, dataclasses.replace(config, managed=intent)
         )
         if plan.remove or plan.add:
             self._write_periods(schedule, existing, plan, destination)
+            self._commit()
         self._storage.save(
-            schedule.id, tenant_uuid, dataclasses.replace(config, managed=plan.managed)
+            schedule_id, tenant_uuid, dataclasses.replace(config, managed=plan.managed)
         )
         return result
 
