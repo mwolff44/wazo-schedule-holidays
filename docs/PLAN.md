@@ -129,3 +129,14 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Commits conventionnels (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
 - `AGENTS.md` : structure et invariants (signature des périodes, fenêtre de 365 jours, JSON atomique + verrou).
 - Le cœur (calendrier, synchro, stockage) n'importe rien de Wazo, donc testable sans stubs ; seuls `plugin.py`, `resources.py` et le CLI importent `wazo_confd`/`xivo_dao`.
+
+## Avancement
+- [x] Phase 0 : vérifications
+- [ ] Phase 1 : squelette plugin + `wazo/rules` (à tester sur une machine 26.10)
+- [x] Phase 2 : calendrier (`holiday_calendar.py`, `_vendor.py`)
+- [x] Phase 3 : cœur de synchro (`sync.py`)
+- [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
+- [ ] Phase 5 : API confd (resources, schémas, service qui applique le plan)
+- [ ] Phase 6 : CLI + `cron.d`
+- [ ] Phase 7 : bout en bout et README
+
