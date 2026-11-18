@@ -176,4 +176,3 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Le code Python est installé dans `/usr/local/lib/python3.11/dist-packages/wazo_schedule_holidays/` : `/usr/bin/python3 -m wazo_schedule_holidays` le trouve, le `cron.d` est donc correct sur ce point.
 - `/var/lib/wazo-schedule-holidays` : `drwxr-x--- www-data www-data`, comme prévu.
 - Défaut trouvé : `python3 -m wazo_schedule_holidays` plantait (`KeyError: 'user'`), car `load_config` perdait `DEFAULT_CONFIG` (`read_config_file_hierarchy` ne retourne que le contenu des fichiers). Corrigé comme dans `purge_meetings.py`. Les tests de contrat remplaçaient `load_config` par un dictionnaire complet : deux tests utilisent maintenant le vrai.
-
