@@ -1,0 +1,38 @@
+#!/bin/sh
+# Copyright 2026 The Wazo Authors  (see the AUTHORS file)
+# SPDX-License-Identifier: GPL-3.0+
+
+DATA_DIR=/var/lib/wazo-schedule-holidays
+VENDOR_DIR=/usr/lib/wazo-schedule-holidays/vendor
+
+case "$1" in
+    build)
+        python3 setup.py bdist
+        ;;
+
+    package)
+        tar xvf dist/wazo-schedule-holidays-*.tar.gz -C ${pkgdir}
+        cp -R etc ${pkgdir}/
+        # holidays, python-dateutil and six are embedded (see scripts/vendor.sh):
+        # Debian bookworm only ships python3-holidays 0.10.1 (different API).
+        mkdir -p ${pkgdir}${VENDOR_DIR}
+        cp -R vendor/. ${pkgdir}${VENDOR_DIR}/
+        ;;
+
+    install)
+        mkdir -p ${DATA_DIR}
+        chown www-data: ${DATA_DIR}
+        chmod 750 ${DATA_DIR}
+        systemctl restart wazo-confd
+        ;;
+
+    uninstall)
+        # The JSON files in ${DATA_DIR} are kept on purpose.
+        systemctl restart wazo-confd
+        ;;
+
+    *)
+        echo "$0 called with unknown argument '$1'" >&2
+        exit 1
+    ;;
+esac

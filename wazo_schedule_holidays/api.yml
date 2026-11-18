@@ -1,0 +1,246 @@
+paths:
+  /schedule-holidays/countries:
+    get:
+      operationId: list_schedule_holidays_countries
+      summary: List the countries (and subdivisions) with a public holiday calendar
+      description: |
+        **Required ACL:** `confd.schedule_holidays.read`
+
+        Country names are the English ISO 3166 names. Subdivision names are the
+        longest alias known by the calendar library, or the code itself.
+      tags:
+      - schedules
+      responses:
+        '200':
+          description: Countries
+          schema:
+            $ref: '#/definitions/ScheduleHolidaysCountries'
+  /schedule-holidays/countries/{country_code}:
+    get:
+      operationId: list_schedule_holidays_country_holidays
+      summary: List the public holidays of a country for a year
+      description: |
+        **Required ACL:** `confd.schedule_holidays.read`
+
+        The `key` of a holiday is its English name: it does not depend on
+        `language` and is what `excluded` refers to.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/scheduleholidayscountrycode'
+      - name: subdivision
+        in: query
+        type: string
+        required: false
+        description: Subdivision code (see the countries list)
+      - name: year
+        in: query
+        type: integer
+        required: false
+        description: Year, defaults to the current year
+      - name: language
+        in: query
+        type: string
+        required: false
+        default: en_US
+        description: Language of the holiday names (falls back to the country default)
+      responses:
+        '200':
+          description: Holidays
+          schema:
+            $ref: '#/definitions/ScheduleHolidaysCountryHolidays'
+        '400':
+          $ref: '#/responses/CreateError'
+        '404':
+          $ref: '#/responses/NotFoundError'
+  /schedules/{schedule_id}/holidays:
+    get:
+      operationId: get_schedule_holidays
+      summary: Get the public holidays configuration of a schedule
+      description: '**Required ACL:** `confd.schedules.{schedule_id}.holidays.read`'
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      responses:
+        '200':
+          description: Configuration
+          schema:
+            $ref: '#/definitions/ScheduleHolidays'
+        '404':
+          $ref: '#/responses/NotFoundError'
+    put:
+      operationId: update_schedule_holidays
+      summary: Create or replace the public holidays configuration of a schedule
+      description: |
+        **Required ACL:** `confd.schedules.{schedule_id}.holidays.update`
+
+        Only the configuration is stored: call the `sync` route to apply it.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/ScheduleHolidays'
+      responses:
+        '204':
+          $ref: '#/responses/ResourceUpdated'
+        '400':
+          $ref: '#/responses/UpdateError'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+    delete:
+      operationId: delete_schedule_holidays
+      summary: Remove the configuration and the exceptional periods it created
+      description: |
+        **Required ACL:** `confd.schedules.{schedule_id}.holidays.delete`
+
+        Exceptional periods that were not created by the plugin are kept.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      responses:
+        '204':
+          $ref: '#/responses/ResourceDeleted'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+  /schedules/{schedule_id}/holidays/sync:
+    post:
+      operationId: sync_schedule_holidays
+      summary: Apply the holidays configuration to the schedule
+      description: |
+        **Required ACL:** `confd.schedules.{schedule_id}.holidays.sync.create`
+
+        Creates one full-day exceptional period per holiday in the next 365
+        days, using the closed destination of the schedule, and removes the
+        periods created previously that are no longer wanted. wazo-agid ignores
+        the year of a period: the synchronisation must therefore run every day.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - name: dry_run
+        in: query
+        type: boolean
+        required: false
+        default: false
+        description: Compute the changes without applying them
+      responses:
+        '200':
+          description: Result of the synchronisation
+          schema:
+            $ref: '#/definitions/ScheduleHolidaysSync'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+parameters:
+  scheduleholidayscountrycode:
+    required: true
+    type: string
+    name: country_code
+    in: path
+    description: ISO 3166-1 alpha-2 country code, e.g. `NL` or `FR`
+definitions:
+  ScheduleHolidays:
+    title: ScheduleHolidays
+    properties:
+      country:
+        type: string
+        description: Country code, e.g. `NL`
+      subdivision:
+        type: string
+        description: Subdivision code, e.g. `6AE` (Alsace) or `57` (Moselle) for `FR`
+      excluded:
+        type: array
+        description: Keys of the holidays that must not close the schedule
+        items:
+          type: string
+      managed:
+        type: array
+        readOnly: true
+        description: Holidays for which the plugin created a period
+        items:
+          $ref: '#/definitions/ScheduleHolidaysEntry'
+    required:
+    - country
+  ScheduleHolidaysEntry:
+    properties:
+      date:
+        type: string
+        format: date
+      key:
+        type: string
+  ScheduleHolidaysSync:
+    properties:
+      dry_run:
+        type: boolean
+      changed:
+        type: boolean
+      today:
+        type: string
+        format: date
+        description: Today's date in the schedule timezone
+      added:
+        type: array
+        items:
+          $ref: '#/definitions/ScheduleHolidaysEntry'
+      removed:
+        type: array
+        items:
+          properties:
+            month:
+              type: integer
+            day:
+              type: integer
+      managed:
+        type: array
+        items:
+          $ref: '#/definitions/ScheduleHolidaysEntry'
+  ScheduleHolidaysCountries:
+    properties:
+      total:
+        type: integer
+      items:
+        type: array
+        items:
+          properties:
+            code:
+              type: string
+            name:
+              type: string
+            subdivisions:
+              type: array
+              items:
+                properties:
+                  code:
+                    type: string
+                  name:
+                    type: string
+  ScheduleHolidaysCountryHolidays:
+    properties:
+      total:
+        type: integer
+      items:
+        type: array
+        items:
+          properties:
+            key:
+              type: string
+            name:
+              type: string
+            date:
+              type: string
+              format: date

@@ -1,0 +1,6 @@
+enabled_plugins:
+  schedule_holidays: true
+
+schedule_holidays:
+  # Directory holding one JSON file per schedule (owned by www-data).
+  directory: /var/lib/wazo-schedule-holidays

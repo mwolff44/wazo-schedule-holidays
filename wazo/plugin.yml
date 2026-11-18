@@ -1,0 +1,9 @@
+name: wazo-schedule-holidays
+namespace: mwolff44
+version: 0.1.0
+author: Mathias WOLFF
+display_name: Schedule public holidays
+min_wazo_version: 26.10
+tags:
+  - schedules
+homepage: https://github.com/mwolff44/wazo-schedule-holidays
