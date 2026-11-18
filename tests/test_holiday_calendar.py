@@ -125,3 +125,17 @@ def test_unknown_subdivision():
 def test_school_zone_is_not_a_valid_subdivision():
     with pytest.raises(UnknownSubdivision):
         cal.holidays_for("FR", "Zone A", 2027)
+
+
+def test_subdivision_names_use_the_longest_alias():
+    names = cal.subdivision_names("FR")
+
+    assert names["6AE"] == "Alsace"
+    assert names["57"] == "Moselle"
+    assert names["971"] == "Guadeloupe"
+    assert set(names) == set(cal.list_subdivisions("FR"))
+
+
+def test_subdivision_names_unknown_country():
+    with pytest.raises(UnknownCountry):
+        cal.subdivision_names("ZZ")

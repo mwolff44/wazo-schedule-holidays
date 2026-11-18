@@ -129,7 +129,7 @@ def period_kwargs(desired: Desired, destination: Destination) -> dict:
     }
 
 
-def _signature(period) -> tuple[int, int] | None:
+def signature(period) -> tuple[int, int] | None:
     """(month, day) if the period looks like one created by the plugin."""
     if period.hours_start != HOURS_START or period.hours_end != HOURS_END:
         return None
@@ -160,7 +160,7 @@ def plan_sync(
     kept_days: set[tuple[int, int]] = set()
     manual_days: set[tuple[int, int]] = set()
     for period in existing:
-        day = _signature(period)
+        day = signature(period)
         if day is None:
             continue
         if day not in old_days:

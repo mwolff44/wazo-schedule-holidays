@@ -103,3 +103,20 @@ def holidays_for(
 def _display_language(module, country: str, language: str) -> str | None:
     supported = module.country_holidays(country).supported_languages
     return language if language in supported else None
+
+
+def subdivision_names(country: str) -> dict[str, str]:
+    """Display name of each subdivision code.
+
+    The library only provides aliases (``{"Alsace": "6AE", "6AE": "6AE", ...}``):
+    the longest alias of a code is used as its name, the code itself otherwise.
+    """
+    codes = list_subdivisions(country)
+    aliases = getattr(
+        holidays_module().country_holidays(country), "subdivisions_aliases", {}
+    )
+    names = {code: code for code in codes}
+    for alias, code in aliases.items():
+        if code in names and len(alias) > len(names[code]):
+            names[code] = alias
+    return names
