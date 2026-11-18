@@ -35,7 +35,7 @@ Version Wazo minimale : **26.10**. Plugin confd (entry point `wazo_confd.plugins
 
 | # | À vérifier | Comment |
 |---|---|---|
-| 0.1 | Livraison de `holidays` | **Résolu en partie** : apt inutilisable (voir résultats), pip à tester sur machine réelle |
+| 0.1 | Livraison de `holidays` | **Résolu** : apt inutilisable ; option A, copie vendorisée (voir résultats) |
 | 0.2 | Répertoire JSON inscriptible par l'utilisateur de confd | **Résolu** : `www-data` |
 | 0.3 | Tenant + contrôle d'accès au schedule | **Résolu** |
 | 0.4 | Fuseau par défaut | **Résolu** : `xivo_dao.resources.infos.dao.get().timezone` |
@@ -51,7 +51,13 @@ Version Wazo minimale : **26.10**. Plugin confd (entry point `wazo_confd.plugins
   - Debian : `python3-holidays` = **0.10.1** (oldstable/bookworm), 0.71 (stable/trixie), 0.97 (testing). Les libellés de suites viennent de tracker.debian.org, non nommés par codename : à recouper.
   - **La 0.10.1 est incompatible avec le plan** (testée) : pas de `country_holidays`, pas de `language`, pas de sous-division ISO `6AE`/`57` ; la France est `holidays.France(prov='Alsace-Moselle')` avec noms français.
   - `holidays` récent (0.109) exige Python >= 3.11 = `X-Python3-Version` de confd. 14 Mo installé.
-  - **Décision** : ne pas dépendre du paquet apt ; embarquer une version récente de `holidays` dans un répertoire du plugin (`pip install --target` dans `rules build`), ajouté au `sys.path` par le plugin et le CLI. Reste à tester : pip et accès réseau disponibles pendant `build` sur une vraie 26.10 (phase 1).
+  - **Décision (validée) : option A, copie vendorisée dans le dépôt.** Pas de pip ni de réseau au build.
+    - `wazo/rules package` copie `vendor/holidays/` dans `${pkgdir}/usr/lib/wazo-schedule-holidays/vendor/` (tout ce qui est dans `${pkgdir}` entre dans le `.deb` construit par plugind avec `dpkg-deb`).
+    - Le plugin et le CLI ajoutent ce répertoire en tête de `sys.path`.
+    - Le paquet généré s'appelle `wazo-plugind-<nom>-<namespace>` : pas de conflit avec un `python3-holidays` d'apt.
+    - Taille mesurée hors `__pycache__` : ~7,4 Mo (4 Mo de `.py`, 3,5 Mo de `.mo`), mesure `du` en blocs donc majorée.
+    - Version figée (`requirements-vendor.txt`, ex. `holidays==0.109`) ; `make vendor` la (re)télécharge, retire `__pycache__` et copie la licence MIT (`dist-info/licenses/LICENSE`). Mise à jour de la lib = nouvelle version du plugin.
+    - Non lu : le gabarit `control` et le script d'installation root de plugind (mise à jour d'un plugin déjà installé).
 - **0.2 — utilisateur.** confd fait `change_user('www-data')` au démarrage (`config['user']`). Le répertoire JSON doit appartenir à `www-data` ; `rules install` le crée.
 - **0.3 — tenant.**
   - Les ressources héritent de `ConfdResource` (`auth_verifier.verify_tenant` + `verify_token`).
@@ -69,7 +75,7 @@ Version Wazo minimale : **26.10**. Plugin confd (entry point `wazo_confd.plugins
 
 ## Phase 1 — squelette
 `wazo/plugin.yml` (namespace `mwolff44`, `min_wazo_version: 26.10`), `wazo/rules`
-(build/package/install/uninstall + restart wazo-confd), `setup.py`, `etc/wazo-confd/conf.d/holidays.yml`.
+(build/package/install/uninstall + restart wazo-confd), `vendor/` + `make vendor`, `setup.py`, `etc/wazo-confd/conf.d/holidays.yml`.
 Critère : confd démarre avec le plugin activé.
 
 ## Phase 2 — calendrier (sans confd)
@@ -101,7 +107,7 @@ Erreurs au format confd ; `api.yml` documenté.
 ## Phase 6 — planification et packaging
 `etc/cron.d/` quotidien + CLI `wazo-schedule-holidays-sync` (modèle `wazo-confd-purge-meetings` :
 config + clé de service, DB, `BusPublisher`/`SysconfdPublisher`, services confd, pas d'appel HTTP) ;
-`chown www-data` des JSON ; `pip install --target` de `holidays` dans `rules build` ;
+`chown www-data` des JSON ; `rules package` copie `vendor/` dans `${pkgdir}` ;
 test d'installation via `wazo-plugind-cli` sur 26.10.
 
 ## Phase 7 — bout en bout et docs
@@ -112,4 +118,4 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Une période manuelle identique à une période gérée serait supprimée à la désélection.
 - Si la synchro échoue plus d'un an, un férié périmé pourrait se redéclencher.
 - Les noms de pays viennent de `pycountry` (dépendance déjà présente dans confd).
-- La lib `holidays` est embarquée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
+- La lib `holidays` est vendorisée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
