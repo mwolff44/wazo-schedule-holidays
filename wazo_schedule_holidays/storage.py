@@ -31,6 +31,7 @@ from pathlib import Path
 from .sync import Desired
 
 CONFIG_VERSION = 1
+DEFAULT_DIRECTORY = "/var/lib/wazo-schedule-holidays"
 FILE_MODE = 0o640
 _CONFIG_FILE = re.compile(r"^(\d+)\.json$")
 

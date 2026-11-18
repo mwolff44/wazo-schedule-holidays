@@ -13,4 +13,4 @@ try:
     import wazo_confd.helpers.restful  # noqa: F401
     import xivo_dao.alchemy.schedule  # noqa: F401
 except ImportError:
-    collect_ignore.append("test_http.py")
+    collect_ignore.extend(["test_http.py", "test_cli.py"])

@@ -18,6 +18,9 @@ setup(
     include_package_data=True,
     package_data={"wazo_schedule_holidays": ["api.yml"]},
     entry_points={
+        "console_scripts": [
+            "wazo-schedule-holidays-sync = wazo_schedule_holidays.cli:main",
+        ],
         "wazo_confd.plugins": [
             "schedule_holidays = wazo_schedule_holidays.plugin:Plugin",
         ],

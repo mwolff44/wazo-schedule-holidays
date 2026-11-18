@@ -2,9 +2,6 @@
 # SPDX-License-Identifier: GPL-3.0+
 
 from wazo_confd.plugins.schedule.service import build_service as build_schedule_service
-from xivo_dao.alchemy.schedule_time import ScheduleTime
-from xivo_dao.helpers.db_manager import Session
-from xivo_dao.resources.infos import dao as infos_dao
 
 from .resources import (
     CountriesResource,
@@ -12,14 +9,7 @@ from .resources import (
     ScheduleHolidaysResource,
     ScheduleHolidaysSyncResource,
 )
-from .service import HolidaysService
-from .storage import ConfigStorage
-
-DEFAULT_DIRECTORY = "/var/lib/wazo-schedule-holidays"
-
-
-def _default_timezone():
-    return infos_dao.get().timezone
+from .wiring import build_holidays_service
 
 
 class Plugin:
@@ -27,15 +17,7 @@ class Plugin:
         api = dependencies["api"]
         config = dependencies["config"]
 
-        settings = config.get("schedule_holidays") or {}
-        storage = ConfigStorage(settings.get("directory", DEFAULT_DIRECTORY))
-        service = HolidaysService(
-            build_schedule_service(),
-            storage,
-            ScheduleTime,
-            default_timezone=_default_timezone,
-            commit=Session.commit,
-        )
+        service, _ = build_holidays_service(config, build_schedule_service())
 
         api.add_resource(CountriesResource, "/schedule-holidays/countries")
         api.add_resource(

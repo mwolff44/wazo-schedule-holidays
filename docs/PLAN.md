@@ -137,7 +137,7 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - [x] Phase 3 : cœur de synchro (`sync.py`)
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
 - [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
-- [ ] Phase 6 : CLI + `cron.d`
+- [x] Phase 6 : CLI + `cron.d` (`runner.py`, `wiring.py`, `cli.py`), testés unitairement et par contrat contre confd/xivo-dao 26.10
 - [ ] Phase 7 : bout en bout et README
 
 ## Décisions de la phase 5
@@ -147,3 +147,19 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Route globale `POST /schedule-holidays/sync` supprimée (le cron passera par le CLI, phase 6). ACL de la synchro : `...holidays.sync.create`.
 - Noms de pays : noms ISO anglais (`pycountry`), non localisés ; noms de sous-divisions : alias le plus long de la lib, sinon le code (heuristique).
 - `api.yml` référence `#/parameters/scheduleid`, défini dans l'`api.yml` du plugin `schedule` natif de confd.
+
+## Décisions de la phase 6
+- Le CLI ne contacte jamais wazo-auth : la clé de service (`_load_key_file`) ne fournit que `auth.username/password`. Elle n'est donc pas lue, ce qui lève le point ouvert « clé lisible par l'utilisateur du cron ».
+- Le CLI construit lui-même `CRUDService(schedule_dao, build_validator(), ScheduleNotifier(bus))` : le `build_service()` du plugin schedule utilise le `bus` global de confd, qui n'existe que dans une requête Flask.
+- Une transaction par schedule (`session_scope`) ; événements du bus publiés (`flush`) seulement après le commit, annulés (`rollback`) en cas d'échec. Un échec n'empêche pas les autres schedules ; code de sortie 1 s'il y en a eu.
+- Un schedule introuvable (supprimé) → son JSON est supprimé (« orphelin ») ; jamais en `--dry-run`.
+- `cron.d` : `7 4 * * * root /usr/bin/python3 -m wazo_schedule_holidays --quiet` (une fois par jour ; la fenêtre de 365 jours laisse une marge d'un an à une exécution manquée).
+- Propriétaire : le CLI (root) donne les JSON et les verrous à `www-data` (`config['user']`) pour que confd puisse les relire/écrire.
+
+## À vérifier sur une stack Wazo 26.10 (non vérifiable ici)
+- `/usr/bin/python3 -m wazo_schedule_holidays` trouve le module : dépend de l'endroit où `python3 setup.py bdist` + plugind l'installent (`/usr/lib/python3/dist-packages` ou `/usr/local/lib/...`, tous deux dans le `sys.path` de Debian) ; sinon adapter le `cron.d`.
+- `rules package` : présence de `vendor/` dans `/usr/lib/wazo-schedule-holidays/vendor` et import réel de `holidays` sous confd.
+- Chargement du plugin par confd (`enabled_plugins`, entry point) et apparition des routes dans `/api/api.yml`.
+- Écritures réelles : base PostgreSQL, `after_request`, événements `schedule_edited` reçus par le bus, évaluation par agid d'un appel un jour férié.
+- Droits : `/var/lib/wazo-schedule-holidays` en `www-data`, fichiers écrits par confd puis par le CLI root.
+- Mise à jour d'un plugin déjà installé (gabarit `control` / scripts de plugind non lus).

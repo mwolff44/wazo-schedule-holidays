@@ -24,6 +24,11 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
   Wazo-free: the confd schedule service, the period class (`ScheduleTime`), the default timezone and
   the `commit` callable are injected. Only `plugin`, `resources`, `schema` and the CLI import
   `wazo_confd` / `xivo_dao`.
+- Daily sync: `runner.py` (Wazo-free orchestration: one transaction per schedule, bus events flushed
+  only after the commit, orphan configs of deleted schedules removed, `resolve_owner` for the
+  root->www-data chown), `wiring.py` (shared by plugin and CLI), `cli.py` (`python3 -m
+  wazo_schedule_holidays [-q] [-n] [-s ID]`, modelled on `wazo-confd-purge-meetings`: no REST call,
+  no wazo-auth, no service key) and `etc/cron.d/wazo-schedule-holidays` (daily, as root).
 - `vendor/`: embedded `holidays`, `python-dateutil`, `six` (Debian bookworm only ships
   `python3-holidays` 0.10.1, which has a different API). Never edit by hand: `make vendor`.
 - `wazo/`: `plugin.yml` and `rules` for wazo-plugind (`rules package` must copy `vendor/`).

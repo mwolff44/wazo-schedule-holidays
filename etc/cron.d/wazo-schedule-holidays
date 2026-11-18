@@ -1,0 +1,8 @@
+#
+# cron job for wazo-schedule-holidays
+#
+# agid ignores the year of a schedule period, so the exceptional periods must be
+# refreshed every day (see docs/PLAN.md). --quiet: only warnings and errors are
+# printed, which cron mails to root.
+
+7 4 * * * root /usr/bin/python3 -m wazo_schedule_holidays --quiet
