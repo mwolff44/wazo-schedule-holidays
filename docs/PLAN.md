@@ -169,3 +169,11 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Contenu du paquet : code Python, `api.yml`, entry points (`wazo_confd.plugins`, console script), `etc/cron.d`, `etc/wazo-confd/conf.d`, `vendor/` sous `/usr/lib/wazo-schedule-holidays/vendor`.
 - Le paquet construit, importé seul, charge `holidays` depuis son `vendor/` (pas celui du dépôt) et `sys.path` reste propre.
 - Réserve : le préfixe d'installation du code Python dépend du `python3` qui exécute `bdist` (ici un venv 3.11) ; sur Debian il sera celui du système. Non vérifiable ici.
+
+## Constats sur une stack Wazo 26.10 (test de l'auteur, 2026-11-18)
+- Installation par `wazo-plugind-cli install git ... --ref main` OK (l'option `-c` est dépréciée).
+- Le plugin est chargé : les 6 routes apparaissent dans `/api/confd/1.1/api/api.yml` à côté des routes natives `/schedules`.
+- Le code Python est installé dans `/usr/local/lib/python3.11/dist-packages/wazo_schedule_holidays/` : `/usr/bin/python3 -m wazo_schedule_holidays` le trouve, le `cron.d` est donc correct sur ce point.
+- `/var/lib/wazo-schedule-holidays` : `drwxr-x--- www-data www-data`, comme prévu.
+- Défaut trouvé : `python3 -m wazo_schedule_holidays` plantait (`KeyError: 'user'`), car `load_config` perdait `DEFAULT_CONFIG` (`read_config_file_hierarchy` ne retourne que le contenu des fichiers). Corrigé comme dans `purge_meetings.py`. Les tests de contrat remplaçaient `load_config` par un dictionnaire complet : deux tests utilisent maintenant le vrai.
+

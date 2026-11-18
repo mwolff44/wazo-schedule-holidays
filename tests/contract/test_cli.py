@@ -5,6 +5,7 @@ import contextlib
 from types import SimpleNamespace
 
 import pytest
+from wazo_confd.config import DEFAULT_CONFIG
 from xivo_dao.alchemy.schedule import Schedule
 from xivo_dao.helpers import errors
 
@@ -12,6 +13,7 @@ from wazo_schedule_holidays import cli
 from wazo_schedule_holidays.storage import ConfigStorage, HolidayConfig
 
 TENANT = "11111111-1111-1111-1111-111111111111"
+REAL_LOAD_CONFIG = cli.load_config  # Env replaces it by a dict, keep the real one
 
 
 class FakeBus:
@@ -173,3 +175,46 @@ def test_only_the_requested_schedule_is_synced(env):
 
     assert env.dao.edited == [2]
     assert env.schedule.exceptional_periods == []
+
+
+def write_config_files(tmp_path, monkeypatch, directory):
+    conf_d = tmp_path / "conf.d"
+    conf_d.mkdir(parents=True)
+    (tmp_path / "config.yml").write_text("bus:\n  host: bus.example.com\n")
+    (conf_d / "schedule-holidays.yml").write_text(
+        f"schedule_holidays:\n  directory: {directory}\n"
+    )
+    monkeypatch.setattr(
+        cli,
+        "DEFAULT_CONFIG",
+        {
+            **DEFAULT_CONFIG,
+            "config_file": str(tmp_path / "config.yml"),
+            "extra_config_files": str(conf_d),
+        },
+    )
+
+
+def test_load_config_keeps_the_defaults_and_applies_the_config_files(
+    tmp_path, monkeypatch
+):
+    write_config_files(tmp_path, monkeypatch, "/somewhere")
+
+    config = REAL_LOAD_CONFIG()
+
+    assert config["user"] == "www-data"
+    assert (
+        config["rest_api"]["min_threads"] == DEFAULT_CONFIG["rest_api"]["min_threads"]
+    )
+    assert config["bus"]["host"] == "bus.example.com"
+    assert config["bus"]["username"] == "guest"
+    assert config["schedule_holidays"]["directory"] == "/somewhere"
+
+
+def test_run_with_the_real_load_config(env, tmp_path, monkeypatch):
+    write_config_files(tmp_path / "etc", monkeypatch, env.directory)
+    monkeypatch.setattr(cli, "load_config", REAL_LOAD_CONFIG)
+
+    assert cli.main(["--quiet"]) == 0
+
+    assert (12, 25) in env.days()

@@ -66,7 +66,10 @@ def log_level(args):
 
 
 def load_config():
-    return ChainMap(read_config_file_hierarchy(ChainMap(DEFAULT_CONFIG)))
+    # read_config_file_hierarchy only returns what the files contain: the defaults
+    # (user, bus, rest_api...) must be chained back, as wazo-confd-purge-meetings does.
+    file_config = read_config_file_hierarchy(ChainMap(DEFAULT_CONFIG))
+    return ChainMap(file_config, DEFAULT_CONFIG)
 
 
 def main(argv=None):
