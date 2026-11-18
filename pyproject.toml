@@ -1,0 +1,37 @@
+[tool.black]
+target-version = ["py311"]
+extend-exclude = "^/vendor/"
+
+[tool.flake8]
+show-source = true
+max-line-length = 99
+application-import-names = ["wazo_schedule_holidays"]
+ignore = [
+  "E203", # whitespace before ':'
+  "E501", # line too long (handled by black)
+  "W503", # line break before binary operator
+]
+exclude = [
+  ".tox",
+  ".eggs",
+  ".venv",
+  ".venv-test",
+  "vendor",
+]
+
+[tool.isort]
+profile = "black"
+py_version = 311
+skip = ["vendor"]
+
+[tool.mypy]
+python_version = "3.11"
+show_error_codes = true
+check_untyped_defs = true
+warn_unused_configs = true
+ignore_missing_imports = true
+explicit_package_bases = true
+files = ["wazo_schedule_holidays"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

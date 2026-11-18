@@ -1,0 +1,5 @@
+# Pure-Python dependencies embedded in vendor/ (see scripts/vendor.sh).
+# holidays imports dateutil.parser at import time, which in turn needs six.
+holidays==0.109
+python-dateutil==2.9.0.post0
+six==1.17.0
