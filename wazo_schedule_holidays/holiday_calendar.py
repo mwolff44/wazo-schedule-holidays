@@ -100,11 +100,6 @@ def holidays_for(
     return result
 
 
-def _display_language(module, country: str, language: str) -> str | None:
-    supported = module.country_holidays(country).supported_languages
-    return language if language in supported else None
-
-
 def subdivision_names(country: str) -> dict[str, str]:
     """Display name of each subdivision code.
 
@@ -120,3 +115,19 @@ def subdivision_names(country: str) -> dict[str, str]:
         if code in names and len(alias) > len(names[code]):
             names[code] = alias
     return names
+
+
+def _display_language(module, country: str, language: str) -> str | None:
+    """The language to give to the library, never ``None`` when avoidable.
+
+    The library infers the language from the environment (LANGUAGE, LC_ALL,
+    LC_MESSAGES, LANG) when none is given, and, as found in 0.109, also when the
+    given one is not supported by the country: the names would then depend on
+    the environment of the process (confd under systemd, cron, a test runner...).
+    An unsupported language is therefore replaced by the default language of the
+    country, which is always one of its supported languages.
+    """
+    entity = module.country_holidays(country)
+    if language in entity.supported_languages:
+        return language
+    return entity.default_language

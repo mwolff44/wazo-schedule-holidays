@@ -139,3 +139,24 @@ def test_subdivision_names_use_the_longest_alias():
 def test_subdivision_names_unknown_country():
     with pytest.raises(UnknownCountry):
         cal.subdivision_names("ZZ")
+
+
+@pytest.mark.parametrize("locale", ["C", "en_US.UTF-8", "fr_FR.UTF-8", "nl_NL.UTF-8"])
+@pytest.mark.parametrize(
+    "language, expected",
+    [
+        ("xx", "Tweede paasdag"),  # unsupported: original language of the country
+        ("nl", "Tweede paasdag"),
+        ("en_US", "Easter Monday"),
+    ],
+)
+def test_names_and_keys_do_not_depend_on_the_process_locale(
+    monkeypatch, locale, language, expected
+):
+    for name in ("LANGUAGE", "LC_ALL", "LC_MESSAGES", "LANG"):
+        monkeypatch.setenv(name, locale)
+
+    holidays = by_key(cal.holidays_for("NL", None, 2027, language=language))
+
+    assert holidays["Easter Monday"].name == expected
+    assert holidays["Easter Monday"].date == datetime.date(2027, 3, 29)
