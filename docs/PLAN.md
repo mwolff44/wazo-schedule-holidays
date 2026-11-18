@@ -138,7 +138,7 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
 - [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
 - [x] Phase 6 : CLI + `cron.d` (`runner.py`, `wiring.py`, `cli.py`), testés unitairement et par contrat contre confd/xivo-dao 26.10
-- [~] Phase 7 : README et checklist écrits ; bout en bout validé sur stack 26.10 pour la France métropolitaine ; reste à valider : Pays-Bas (synchro réelle), cron, désinstallation (voir « Constats sur une stack »)
+- [~] Phase 7 : README et checklist écrits ; bout en bout validé sur stack 26.10 pour la France métropolitaine ; reste à valider : cron, désinstallation, Moselle, multi-tenant (voir « Constats sur une stack »)
 
 ## Décisions de la phase 5
 - Le service est injecté (service schedule de confd, `ScheduleTime`, fuseau par défaut, `commit`) : il reste testable sans Wazo.
@@ -187,11 +187,11 @@ Test sur un schedule `Europe/Paris` avec une destination de fermeture `sound` et
 - **Appel réel** : validé par l'auteur (évaluation par agid).
 - **Droits** : `/var/lib/wazo-schedule-holidays` et fichiers `www-data` ; « droits OK » annoncé par l'auteur, y compris après une écriture par le CLI.
 - **Alsace** (`FR` / `6AE`) : validée par l'auteur (dry-run puis synchro, résultat conforme à l'attendu : Vendredi saint 2027-03-26 et Saint-Étienne 2026-12-26 en plus de la métropole). La Moselle (`57`) n'a pas été testée séparément.
+- **Pays-Bas** (`NL`) : synchro validée par l'auteur (sans le détail de la réponse).
 - **Mise à jour** : réinstallation par-dessus une version déjà installée OK.
 - **CLI** : `python3 -m wazo_schedule_holidays --dry-run` OK (`0 synchronised` sans configuration, puis avec).
 
 ### Reste à valider sur la stack
-- **Pays-Bas** (cas prioritaire) : synchro réelle de `NL` (seule la lecture `GET /schedule-holidays/countries/NL` a été testée) ; par exemple Koningsdag 2027-04-27.
 - **Cron** : présence de `/etc/cron.d/wazo-schedule-holidays` et première exécution réelle (04:07).
 - **Désinstallation** : non testée (`rules uninstall` conserve volontairement les JSON).
 - Moselle (`57`), plusieurs tenants, et changement de pays sur un schedule déjà synchronisé.
