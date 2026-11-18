@@ -124,10 +124,14 @@ def _display_language(module, country: str, language: str) -> str | None:
     LC_MESSAGES, LANG) when none is given, and, as found in 0.109, also when the
     given one is not supported by the country: the names would then depend on
     the environment of the process (confd under systemd, cron, a test runner...).
-    An unsupported language is therefore replaced by the default language of the
-    country, which is always one of its supported languages.
+
+    Fallback order: the requested language, then English (``KEY_LANGUAGE``, the
+    default of the API), then the default language of the country.
     """
     entity = module.country_holidays(country)
-    if language in entity.supported_languages:
+    supported = entity.supported_languages
+    if language in supported:
         return language
+    if KEY_LANGUAGE in supported:
+        return KEY_LANGUAGE
     return entity.default_language

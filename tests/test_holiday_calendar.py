@@ -68,10 +68,11 @@ def test_default_language_is_english():
     assert holidays["Easter Monday"].name == "Easter Monday"
 
 
-def test_unsupported_language_falls_back_to_country_default_for_names_only():
+def test_unsupported_language_falls_back_to_english_for_names_only():
     holidays = by_key(cal.holidays_for("NL", None, 2027, language="xx"))
 
-    assert holidays["Easter Monday"].name == "Tweede paasdag"
+    assert holidays["Easter Monday"].name == "Easter Monday"
+    assert holidays["Easter Monday"].date == datetime.date(2027, 3, 29)
 
 
 def test_alsace_and_moselle_have_good_friday_and_saint_stephen():
@@ -145,7 +146,7 @@ def test_subdivision_names_unknown_country():
 @pytest.mark.parametrize(
     "language, expected",
     [
-        ("xx", "Tweede paasdag"),  # unsupported: original language of the country
+        ("xx", "Easter Monday"),  # unsupported: English
         ("nl", "Tweede paasdag"),
         ("en_US", "Easter Monday"),
     ],
@@ -160,3 +161,48 @@ def test_names_and_keys_do_not_depend_on_the_process_locale(
 
     assert holidays["Easter Monday"].name == expected
     assert holidays["Easter Monday"].date == datetime.date(2027, 3, 29)
+
+
+class FakeEntity:
+    def __init__(self, supported, default):
+        self.supported_languages = supported
+        self.default_language = default
+
+
+class FakeModule:
+    def __init__(self, entity):
+        self.entity = entity
+
+    def country_holidays(self, country):
+        return self.entity
+
+
+@pytest.mark.parametrize(
+    "supported, default, requested, expected",
+    [
+        (("en_US", "nl"), "nl", "nl", "nl"),  # supported: kept
+        (("en_US", "nl"), "nl", "xx", "en_US"),  # unsupported: English first
+        (("nl", "fy"), "nl", "xx", "nl"),  # no English: country default
+        ((), None, "xx", None),  # no translation at all: nothing to choose
+    ],
+)
+def test_display_language_fallback_order(supported, default, requested, expected):
+    module = FakeModule(FakeEntity(supported, default))
+
+    assert cal._display_language(module, "XX", requested) == expected
+
+
+def test_every_country_with_translations_supports_english():
+    # The English fallback relies on it; if a library update breaks it, the
+    # country default language is used instead (see _display_language).
+    from wazo_schedule_holidays._vendor import holidays_module
+
+    module = holidays_module()
+    missing = [
+        code
+        for code in cal.list_countries()
+        if module.country_holidays(code).supported_languages
+        and "en_US" not in module.country_holidays(code).supported_languages
+    ]
+
+    assert missing == []

@@ -43,7 +43,9 @@ paths:
         type: string
         required: false
         default: en_US
-        description: Language of the holiday names (falls back to the country default)
+        description: |
+          Language of the holiday names. If the country does not support it, English
+          (`en_US`) is used, then the language of the country.
       responses:
         '200':
           description: Holidays

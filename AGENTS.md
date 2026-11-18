@@ -37,7 +37,9 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
 ## Invariants to preserve
 
 - Holiday keys are the `en_US` names (stable across languages); duplicates within a year get a
-  date-rank suffix (`Name #1`). Display language is a request parameter, never stored.
+  date-rank suffix (`Name #1`). Display language is a request parameter, never stored. Never give
+  `language=None` to the `holidays` library (it infers the language from LANG/LC_ALL...): names fall
+  back to the requested language, then English, then the country default (`_display_language`).
 - The JSON config is written atomically (temp file + `os.replace`) under a `flock`; files must be
   owned by `www-data` (confd runs as `www-data`, the cron CLI runs as root).
 - The service writes the JSON with the union of old and new managed dates *before* touching the
