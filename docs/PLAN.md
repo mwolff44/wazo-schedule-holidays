@@ -35,13 +35,37 @@ Version Wazo minimale : **26.10**. Plugin confd (entry point `wazo_confd.plugins
 
 | # | À vérifier | Comment |
 |---|---|---|
-| 0.1 | Livraison de `holidays` (apt `python3-holidays`, pip dans le venv confd, ou vendorisé) | wazo-plugind (`rules`, `debian_depends`), version du paquet Debian |
-| 0.2 | Répertoire JSON inscriptible par l'utilisateur de confd | service systemd / utilisateur wazo-confd |
-| 0.3 | Tenant + contrôle d'accès au schedule dans un plugin | `helpers/restful.py` (`_add_tenant_uuid`), `helpers/resource.py` |
-| 0.4 | Fuseau par défaut (`infos.timezone`) | xivo-dao `infos` |
-| 0.5 | Tâche quotidienne : timer systemd + CLI + `wazo-auth-keys` | plugin tiers existant (`wazo-calld-application-continue`) |
-| 0.6 | Destination `user` copiée acceptée par la validation | test en phase 3 |
-| 0.7 | Unicité des clés `en_US` par pays/année | script FR, NL, autres, 2026-2035 |
+| 0.1 | Livraison de `holidays` | **Résolu en partie** : apt inutilisable (voir résultats), pip à tester sur machine réelle |
+| 0.2 | Répertoire JSON inscriptible par l'utilisateur de confd | **Résolu** : `www-data` |
+| 0.3 | Tenant + contrôle d'accès au schedule | **Résolu** |
+| 0.4 | Fuseau par défaut | **Résolu** : `xivo_dao.resources.infos.dao.get().timezone` |
+| 0.5 | Tâche quotidienne | **Résolu** : `cron.d` + CLI sur le modèle de `wazo-confd-purge-meetings` |
+| 0.6 | Destination `user` copiée | **Résolu par lecture** (réserve : test réel en phase 7) |
+| 0.7 | Unicité des clés `en_US` | **Résolu** : 0 doublon pour NL et FR |
+
+### Résultats de la phase 0 (code lu : confd, xivo-dao, wazo-agid, wazo-plugind, tag wazo-26.10 / HEAD 26.11)
+
+- **0.1 — dépendance.**
+  - `wazo-plugind` gère `debian_depends` (paquets apt) et `depends` (autres plugins Wazo). Aucune gestion de dépendances pip trouvée.
+  - Wazo est basé sur Debian 12 (bookworm) depuis la 25.15 ; je n'ai rien trouvé indiquant un changement pour 26.10 (à confirmer sur une 26.10 réelle).
+  - Debian : `python3-holidays` = **0.10.1** (oldstable/bookworm), 0.71 (stable/trixie), 0.97 (testing). Les libellés de suites viennent de tracker.debian.org, non nommés par codename : à recouper.
+  - **La 0.10.1 est incompatible avec le plan** (testée) : pas de `country_holidays`, pas de `language`, pas de sous-division ISO `6AE`/`57` ; la France est `holidays.France(prov='Alsace-Moselle')` avec noms français.
+  - `holidays` récent (0.109) exige Python >= 3.11 = `X-Python3-Version` de confd. 14 Mo installé.
+  - **Décision** : ne pas dépendre du paquet apt ; embarquer une version récente de `holidays` dans un répertoire du plugin (`pip install --target` dans `rules build`), ajouté au `sys.path` par le plugin et le CLI. Reste à tester : pip et accès réseau disponibles pendant `build` sur une vraie 26.10 (phase 1).
+- **0.2 — utilisateur.** confd fait `change_user('www-data')` au démarrage (`config['user']`). Le répertoire JSON doit appartenir à `www-data` ; `rules install` le crée.
+- **0.3 — tenant.**
+  - Les ressources héritent de `ConfdResource` (`auth_verifier.verify_tenant` + `verify_token`).
+  - L'accès à un schedule : `service.get(id, tenant_uuids=self._build_tenant_list({'recurse': True}))`, 404 sinon.
+  - Le service d'édition ne valide que `closed_destination` : il n'y a pas de validateur par période.
+- **0.4 — fuseau.** `Schedule.timezone`, sinon `Infos.timezone` via `xivo_dao.resources.infos.dao.get()`.
+- **0.5 — tâche quotidienne.**
+  - Précédent : `debian/cron.d` de confd (`24 3 * * * root /usr/bin/wazo-confd-purge-meetings --quiet`). Le CLI `purge_meetings.py` n'appelle pas l'API HTTP : il charge la config et la clé de service, initialise la DB, construit `BusPublisher` et `SysconfdPublisher`, puis réutilise les services confd.
+  - **Conséquence** : le CLI de synchro suit ce modèle. Plus de route globale `POST /schedule-holidays/sync` ni d'ACL `wazo-auth-keys`.
+  - Le notifier schedule utilise le `bus` global de confd : le CLI doit en construire un avec son `BusPublisher`.
+  - Point ouvert : cron en root crée des JSON appartenant à root ; il faut `chown www-data` après écriture (ou cron en `www-data` si la clé de service est lisible, non vérifié).
+- **0.6 — destination copiée.** agid construit `ScheduleAction(action, actionid, actionargs)` de la même façon pour le repli et pour une période (`objects.py`) : les champs sont équivalents. Écrit via le service (modèle), la période ne passe par aucun validateur de destination.
+- **0.7 — clés.** Sur ~18 000 combinaisons pays/sous-division/année (2026-2035), 2 922 ont des noms `en_US` en double (ex. `AD`/`06`). **0** pour NL et FR, toutes sous-divisions. Règle : si un nom est en double dans une année, suffixer par rang de date (`Name #1`, `Name #2`).
+- **Noms de pays** : `python3-pycountry` est déjà une dépendance de confd (`plugins/localization/schema.py`). On l'utilise pour localiser les noms de pays (limite levée).
 
 ## Phase 1 — squelette
 `wazo/plugin.yml` (namespace `mwolff44`, `min_wazo_version: 26.10`), `wazo/rules`
@@ -70,14 +94,15 @@ Tests : répertoire temporaire, fichier corrompu/absent.
 | `GET /schedule-holidays/countries/{code}?subdivision=&year=&language=` | idem |
 | `GET/PUT/DELETE /schedules/{id}/holidays` | `confd.schedules.{id}.holidays.read/update/delete` |
 | `POST /schedules/{id}/holidays/sync` (`?dry_run=true`) | `confd.schedules.{id}.holidays.update` |
-| `POST /schedule-holidays/sync` (tous les schedules configurés) | `confd.schedule-holidays.sync.create` |
 
 `PUT` valide pays, sous-division, clés exclues. `DELETE` retire aussi les périodes gérées.
 Erreurs au format confd ; `api.yml` documenté.
 
 ## Phase 6 — planification et packaging
-Timer systemd quotidien + CLI `wazo-schedule-holidays-sync` ; `wazo-auth-keys` ; test d'installation
-via `wazo-plugind-cli` sur 26.10.
+`etc/cron.d/` quotidien + CLI `wazo-schedule-holidays-sync` (modèle `wazo-confd-purge-meetings` :
+config + clé de service, DB, `BusPublisher`/`SysconfdPublisher`, services confd, pas d'appel HTTP) ;
+`chown www-data` des JSON ; `pip install --target` de `holidays` dans `rules build` ;
+test d'installation via `wazo-plugind-cli` sur 26.10.
 
 ## Phase 7 — bout en bout et docs
 VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jour férié. README.
@@ -86,4 +111,5 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Config JSON non répliquée en HA ni sauvegardée avec la DB.
 - Une période manuelle identique à une période gérée serait supprimée à la désélection.
 - Si la synchro échoue plus d'un an, un férié périmé pourrait se redéclencher.
-- Les noms de pays ne viennent pas de la lib (codes seulement) : à localiser côté UI.
+- Les noms de pays viennent de `pycountry` (dépendance déjà présente dans confd).
+- La lib `holidays` est embarquée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
