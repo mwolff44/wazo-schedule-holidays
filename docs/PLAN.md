@@ -132,13 +132,13 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 
 ## Avancement
 - [x] Phase 0 : vérifications
-- [ ] Phase 1 : squelette plugin + `wazo/rules` (à tester sur une machine 26.10)
+- [~] Phase 1 : squelette plugin + `wazo/rules` écrits ; `build`+`package` rejoués ici et paquet vérifié autonome ; chargement par confd à tester sur une stack 26.10
 - [x] Phase 2 : calendrier (`holiday_calendar.py`, `_vendor.py`)
 - [x] Phase 3 : cœur de synchro (`sync.py`)
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
 - [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
 - [x] Phase 6 : CLI + `cron.d` (`runner.py`, `wiring.py`, `cli.py`), testés unitairement et par contrat contre confd/xivo-dao 26.10
-- [ ] Phase 7 : bout en bout et README
+- [~] Phase 7 : README et checklist de test écrits ; bout en bout à faire sur une stack 26.10
 
 ## Décisions de la phase 5
 - Le service est injecté (service schedule de confd, `ScheduleTime`, fuseau par défaut, `commit`) : il reste testable sans Wazo.
@@ -163,3 +163,9 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Écritures réelles : base PostgreSQL, `after_request`, événements `schedule_edited` reçus par le bus, évaluation par agid d'un appel un jour férié.
 - Droits : `/var/lib/wazo-schedule-holidays` en `www-data`, fichiers écrits par confd puis par le CLI root.
 - Mise à jour d'un plugin déjà installé (gabarit `control` / scripts de plugind non lus).
+
+## Packaging : vérifié ici (build + package rejoués sur une copie propre du dépôt)
+- Défaut trouvé et corrigé : les setuptools récents nomment le tar `wazo_schedule_holidays-*` (tiret bas) ; le glob `wazo-schedule-holidays-*` ne trouvait rien et, sans `set -e`, `package` réussissait avec un paquet **sans code Python**. `rules` utilise maintenant `set -e` et `dist/*.tar.gz` ; un tar manquant fait échouer `package`.
+- Contenu du paquet : code Python, `api.yml`, entry points (`wazo_confd.plugins`, console script), `etc/cron.d`, `etc/wazo-confd/conf.d`, `vendor/` sous `/usr/lib/wazo-schedule-holidays/vendor`.
+- Le paquet construit, importé seul, charge `holidays` depuis son `vendor/` (pas celui du dépôt) et `sys.path` reste propre.
+- Réserve : le préfixe d'installation du code Python dépend du `python3` qui exécute `bdist` (ici un venv 3.11) ; sur Debian il sera celui du système. Non vérifiable ici.
