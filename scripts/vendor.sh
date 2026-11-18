@@ -18,6 +18,9 @@ trap 'rm -rf "$tmp"' EXIT
 rm -rf "$root/vendor"
 mkdir -p "$root/vendor/licenses"
 cp -R "$tmp/holidays" "$tmp/dateutil" "$tmp/six.py" "$root/vendor/"
+# holidays/version.py reads its version with importlib.metadata at import time,
+# which needs the distribution metadata next to the package.
+cp -R "$tmp"/holidays-*.dist-info "$root/vendor/"
 find "$root/vendor" -name __pycache__ -type d -prune -exec rm -rf {} +
 
 for dist in "$tmp"/*.dist-info; do
