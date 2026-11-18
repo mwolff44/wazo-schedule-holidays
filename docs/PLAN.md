@@ -132,13 +132,13 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 
 ## Avancement
 - [x] Phase 0 : vérifications
-- [~] Phase 1 : squelette plugin + `wazo/rules` écrits ; `build`+`package` rejoués ici et paquet vérifié autonome ; chargement par confd à tester sur une stack 26.10
+- [x] Phase 1 : squelette plugin + `wazo/rules` ; `build`+`package` rejoués ici ; installation, chargement par confd et routes exposées validés sur une stack 26.10
 - [x] Phase 2 : calendrier (`holiday_calendar.py`, `_vendor.py`)
 - [x] Phase 3 : cœur de synchro (`sync.py`)
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
 - [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
 - [x] Phase 6 : CLI + `cron.d` (`runner.py`, `wiring.py`, `cli.py`), testés unitairement et par contrat contre confd/xivo-dao 26.10
-- [~] Phase 7 : README et checklist de test écrits ; bout en bout à faire sur une stack 26.10
+- [~] Phase 7 : README et checklist écrits ; bout en bout validé sur stack 26.10 pour la France métropolitaine ; reste à valider : Alsace (`FR`/`6AE`), Pays-Bas (synchro réelle), cron, désinstallation (voir « Constats sur une stack »)
 
 ## Décisions de la phase 5
 - Le service est injecté (service schedule de confd, `ScheduleTime`, fuseau par défaut, `commit`) : il reste testable sans Wazo.
@@ -176,3 +176,22 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Le code Python est installé dans `/usr/local/lib/python3.11/dist-packages/wazo_schedule_holidays/` : `/usr/bin/python3 -m wazo_schedule_holidays` le trouve, le `cron.d` est donc correct sur ce point.
 - `/var/lib/wazo-schedule-holidays` : `drwxr-x--- www-data www-data`, comme prévu.
 - Défaut trouvé : `python3 -m wazo_schedule_holidays` plantait (`KeyError: 'user'`), car `load_config` perdait `DEFAULT_CONFIG` (`read_config_file_hierarchy` ne retourne que le contenu des fichiers). Corrigé comme dans `purge_meetings.py`. Les tests de contrat remplaçaient `load_config` par un dictionnaire complet : deux tests utilisent maintenant le vrai.
+
+### Validé sur la stack (écrit à partir des retours de l'auteur, la plupart des sorties n'ont pas été vues par l'assistant)
+Test sur un schedule `Europe/Paris` avec une destination de fermeture `sound` et deux périodes d'ouverture, configuration `FR` sans sous-division, date du jour 2026-11-18 :
+- **Dry-run** : 11 fériés du 2026-12-25 au 2027-11-11, dates mobiles cohérentes (Lundi de Pâques 29/03, Ascension 06/05, Lundi de Pentecôte 17/05 ; vérifiées aussi à Pâques+38 et +49 jours). Le 11/11/2026, passé, est exclu.
+- **Synchro réelle** : 11 `exceptional_periods` plein-jour créées, destination copiée (`type: sound`, `filename`, `skip`, `no_answer`) ; `open_periods` inchangées.
+- **Idempotence** : une seconde synchro renvoie `"changed": false`.
+- **Retrait** : `PUT` avec `excluded: ["Christmas Day"]` (204) puis synchro : seule la période du 25/12 disparaît (10 restantes).
+- **`DELETE .../holidays`** : validé (période manuelle conservée).
+- **Appel réel** : validé par l'auteur (évaluation par agid).
+- **Droits** : `/var/lib/wazo-schedule-holidays` et fichiers `www-data` ; « droits OK » annoncé par l'auteur, y compris après une écriture par le CLI.
+- **Mise à jour** : réinstallation par-dessus une version déjà installée OK.
+- **CLI** : `python3 -m wazo_schedule_holidays --dry-run` OK (`0 synchronised` sans configuration, puis avec).
+
+### Reste à valider sur la stack
+- **Alsace** (cas prioritaire) : `{"country":"FR","subdivision":"6AE"}` doit ajouter par rapport à la métropole le **Vendredi saint (2027-03-26)** et la **Saint-Étienne (2026-12-26)** ; `57` (Moselle) idem. À comparer avec le dry-run de la métropole.
+- **Pays-Bas** (cas prioritaire) : synchro réelle de `NL` (seule la lecture `GET /schedule-holidays/countries/NL` a été testée) ; par exemple Koningsdag 2027-04-27.
+- **Cron** : présence de `/etc/cron.d/wazo-schedule-holidays` et première exécution réelle (04:07).
+- **Désinstallation** : non testée (`rules uninstall` conserve volontairement les JSON).
+- Plusieurs tenants, et changement de pays sur un schedule déjà synchronisé.
