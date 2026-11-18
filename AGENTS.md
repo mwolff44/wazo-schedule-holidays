@@ -20,8 +20,10 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
 ## Layout
 
 - `wazo_schedule_holidays/`: package. The core (`holiday_calendar`, `sync`, `storage`, `_vendor`)
-  must **not import anything from Wazo** so it is testable in isolation. Only `plugin`, `resources`,
-  `service` and the CLI may import `wazo_confd` / `xivo_dao`.
+  must **not import anything from Wazo** so it is testable in isolation. `service.py` is also
+  Wazo-free: the confd schedule service, the period class (`ScheduleTime`), the default timezone and
+  the `commit` callable are injected. Only `plugin`, `resources`, `schema` and the CLI import
+  `wazo_confd` / `xivo_dao`.
 - `vendor/`: embedded `holidays`, `python-dateutil`, `six` (Debian bookworm only ships
   `python3-holidays` 0.10.1, which has a different API). Never edit by hand: `make vendor`.
 - `wazo/`: `plugin.yml` and `rules` for wazo-plugind (`rules package` must copy `vendor/`).
@@ -33,6 +35,9 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
   date-rank suffix (`Name #1`). Display language is a request parameter, never stored.
 - The JSON config is written atomically (temp file + `os.replace`) under a `flock`; files must be
   owned by `www-data` (confd runs as `www-data`, the cron CLI runs as root).
+- The service writes the JSON with the union of old and new managed dates *before* touching the
+  schedule, commits explicitly, and only then writes the final JSON: confd commits after the request,
+  so without this a failed commit could leave plugin-created periods unmanaged (orphans).
 - A manual period identical to a desired holiday is left alone and never managed.
 - The sync is idempotent: no write when nothing changed.
 
@@ -43,4 +48,10 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
 - Conventional commits (`feat:`, `fix:`, `docs:`, `test:`, `chore:`).
 - `pre-commit run --all-files` (black, isort, flake8, pyupgrade, mypy, copyright check);
   `vendor/` is excluded from all tools.
-- Tests: `pip install -r requirements-test.txt && pytest tests/`.
+- Tests: `pip install -r requirements-test.txt && pytest tests/` (`tests/contract` is skipped there).
+- Contract tests (`make contract`, `scripts/contract-tests.sh [wazo-26.10]`): same suite plus
+  `tests/contract`, run on Python 3.11 against the real `wazo-confd` and `xivo-dao` sources of a
+  Wazo release, with auth and database replaced by fakes. They check the real `Schedule` /
+  `ScheduleTime` models, the confd schemas and resources, ACLs, tenant isolation and error codes.
+  They do **not** cover a running confd (DB, bus, `after_request` commit, plugin loading by
+  stevedore): that still needs a real Wazo 26.10.

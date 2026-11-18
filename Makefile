@@ -1,4 +1,4 @@
-.PHONY: vendor test lint
+.PHONY: vendor test lint contract
 
 vendor:
 	scripts/vendor.sh
@@ -8,3 +8,6 @@ test:
 
 lint:
 	pre-commit run --all-files
+
+contract:
+	scripts/contract-tests.sh

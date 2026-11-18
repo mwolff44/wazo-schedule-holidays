@@ -99,10 +99,10 @@ Tests : répertoire temporaire, fichier corrompu/absent.
 ## Phase 5 — API
 | Route | ACL |
 |---|---|
-| `GET /schedule-holidays/countries` | `confd.schedule-holidays.read` |
-| `GET /schedule-holidays/countries/{code}?subdivision=&year=&language=` | idem |
+| `GET /schedule-holidays/countries` | `confd.schedule_holidays.read` |
+| `GET /schedule-holidays/countries/{code}?subdivision=&year=&language=` | `confd.schedule_holidays.read` |
 | `GET/PUT/DELETE /schedules/{id}/holidays` | `confd.schedules.{id}.holidays.read/update/delete` |
-| `POST /schedules/{id}/holidays/sync` (`?dry_run=true`) | `confd.schedules.{id}.holidays.update` |
+| `POST /schedules/{id}/holidays/sync` (`?dry_run=true`) | `confd.schedules.{id}.holidays.sync.create` |
 
 `PUT` valide pays, sous-division, clés exclues. `DELETE` retire aussi les périodes gérées.
 Erreurs au format confd ; `api.yml` documenté.
@@ -136,7 +136,14 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - [x] Phase 2 : calendrier (`holiday_calendar.py`, `_vendor.py`)
 - [x] Phase 3 : cœur de synchro (`sync.py`)
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
-- [ ] Phase 5 : API confd (resources, schémas, service qui applique le plan)
+- [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
 - [ ] Phase 6 : CLI + `cron.d`
 - [ ] Phase 7 : bout en bout et README
 
+## Décisions de la phase 5
+- Le service est injecté (service schedule de confd, `ScheduleTime`, fuseau par défaut, `commit`) : il reste testable sans Wazo.
+- **`commit` explicite** entre la modification du schedule et l'écriture finale du JSON : confd ne commit qu'après la requête (`after_request`, puis flush sysconfd et bus). Sans cela, un commit en échec laisserait des périodes supprimées en base mais plus « gérées ».
+- Écriture du JSON en deux temps (union ancien/nouveau avant la modification, état final après le commit).
+- Route globale `POST /schedule-holidays/sync` supprimée (le cron passera par le CLI, phase 6). ACL de la synchro : `...holidays.sync.create`.
+- Noms de pays : noms ISO anglais (`pycountry`), non localisés ; noms de sous-divisions : alias le plus long de la lib, sinon le code (heuristique).
+- `api.yml` référence `#/parameters/scheduleid`, défini dans l'`api.yml` du plugin `schedule` natif de confd.
