@@ -2,6 +2,9 @@
 # Copyright 2026 The Wazo Authors  (see the AUTHORS file)
 # SPDX-License-Identifier: GPL-3.0+
 
+# Fail on the first error: a missing tarball must not produce an empty package.
+set -e
+
 DATA_DIR=/var/lib/wazo-schedule-holidays
 VENDOR_DIR=/usr/lib/wazo-schedule-holidays/vendor
 
@@ -11,7 +14,9 @@ case "$1" in
         ;;
 
     package)
-        tar xvf dist/wazo-schedule-holidays-*.tar.gz -C ${pkgdir}
+        # dist/ only holds our bdist tarball; its name depends on the setuptools
+        # version (wazo-schedule-holidays-* or wazo_schedule_holidays-*).
+        tar xvf dist/*.tar.gz -C ${pkgdir}
         cp -R etc ${pkgdir}/
         # holidays, python-dateutil and six are embedded (see scripts/vendor.sh):
         # Debian bookworm only ships python3-holidays 0.10.1 (different API).
