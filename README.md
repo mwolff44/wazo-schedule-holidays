@@ -21,7 +21,7 @@ and removes the past ones. Each period uses the **closed destination** of the sc
 ## Installation
 
 ```sh
-wazo-plugind-cli -c "install git https://github.com/mwolff44/wazo-schedule-holidays --ref main"
+wazo-plugind-cli install git https://github.com/mwolff44/wazo-schedule-holidays --ref main
 ```
 
 This installs the package, enables the plugin (`/etc/wazo-confd/conf.d/schedule-holidays.yml`),
