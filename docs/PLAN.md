@@ -57,6 +57,8 @@ Version Wazo minimale : **26.10**. Plugin confd (entry point `wazo_confd.plugins
     - Le paquet généré s'appelle `wazo-plugind-<nom>-<namespace>` : pas de conflit avec un `python3-holidays` d'apt.
     - Taille mesurée hors `__pycache__` : ~7,4 Mo (4 Mo de `.py`, 3,5 Mo de `.mo`), mesure `du` en blocs donc majorée.
     - Version figée (`requirements-vendor.txt`, ex. `holidays==0.109`) ; `make vendor` la (re)télécharge, retire `__pycache__` et copie la licence MIT (`dist-info/licenses/LICENSE`). Mise à jour de la lib = nouvelle version du plugin.
+    - `holidays` importe `dateutil.parser` à l'import, qui dépend de `six` ; `python-dateutil` n'est pas dans les dépendances de confd (non vérifié sur machine) : **on vendorise aussi `python-dateutil` et `six`** (~0,9 Mo).
+    - `sys.path` : le répertoire `vendor` est ajouté en tête **uniquement pendant l'import**, puis retiré, pour ne pas modifier durablement le chemin du processus confd. Si un `holidays` incompatible est déjà chargé (pas de `country_holidays`), erreur explicite.
     - Non lu : le gabarit `control` et le script d'installation root de plugind (mise à jour d'un plugin déjà installé).
 - **0.2 — utilisateur.** confd fait `change_user('www-data')` au démarrage (`config['user']`). Le répertoire JSON doit appartenir à `www-data` ; `rules install` le crée.
 - **0.3 — tenant.**
@@ -90,7 +92,8 @@ Tests : fenêtre (veille / jour même / J+365), exclusions, période manuelle id
 non touchée, idempotence, changement de destination propagé, changement de pays.
 
 ## Phase 4 — stockage
-Lecture/écriture atomique, validation `version` et `tenant_uuid`, suppression, nettoyage des orphelins.
+Lecture/écriture atomique, **verrou de fichier** (`flock`) contre deux synchros simultanées (CLI + bouton),
+validation `version` et `tenant_uuid`, suppression, nettoyage des orphelins.
 Tests : répertoire temporaire, fichier corrompu/absent.
 
 ## Phase 5 — API
@@ -119,3 +122,10 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Si la synchro échoue plus d'un an, un férié périmé pourrait se redéclencher.
 - Les noms de pays viennent de `pycountry` (dépendance déjà présente dans confd).
 - La lib `holidays` est vendorisée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
+
+## Conventions et outillage (validé, modèle : `wazo-calld-queue`)
+- Licence **GPL-3.0+** (cohérence avec confd et l'écosystème Wazo) ; en-tête `Copyright 2026 The Wazo Authors  (see the AUTHORS file)` + `SPDX-License-Identifier: GPL-3.0+` dans chaque fichier Python.
+- `pyproject.toml` (black, isort, flake8, mypy), `.pre-commit-config.yaml` (dont `wazo-copyright-check`), `tox.ini`, `requirements-test.txt`, CI GitHub (linters + pytest, Python 3.11). `vendor/` exclu de tous les outils.
+- Commits conventionnels (`feat:`, `fix:`, `docs:`, `chore:`, `test:`).
+- `AGENTS.md` : structure et invariants (signature des périodes, fenêtre de 365 jours, JSON atomique + verrou).
+- Le cœur (calendrier, synchro, stockage) n'importe rien de Wazo, donc testable sans stubs ; seuls `plugin.py`, `resources.py` et le CLI importent `wazo_confd`/`xivo_dao`.
