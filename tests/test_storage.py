@@ -15,7 +15,7 @@ from wazo_schedule_holidays.storage import (
     LockedError,
     StorageError,
 )
-from wazo_schedule_holidays.sync import Desired
+from wazo_schedule_holidays.sync import Closure, Desired
 
 TENANT = "11111111-1111-1111-1111-111111111111"
 OTHER_TENANT = "22222222-2222-2222-2222-222222222222"
@@ -62,8 +62,77 @@ def test_saved_file_format(storage):
         "country": "NL",
         "subdivision": None,
         "excluded": ["Good Friday"],
-        "managed": [{"date": "2027-03-29", "key": "Easter Monday"}],
+        "closures": [],
+        "managed": [
+            {
+                "date": "2027-03-29",
+                "key": "Easter Monday",
+                "hours_start": "00:00",
+                "hours_end": "23:59",
+            }
+        ],
     }
+
+
+def test_closures_and_partial_hours_roundtrip(storage):
+    seminar = Closure(
+        start=datetime.datetime(2027, 11, 19, 12, 0),
+        end=datetime.datetime(2027, 11, 20, 14, 0),
+        label="Seminar",
+    )
+    managed = [
+        Desired(datetime.date(2027, 11, 19), "Seminar", "12:00", "23:59"),
+        Desired(datetime.date(2027, 11, 20), "Seminar", "00:00", "14:00"),
+    ]
+    storage.save(1, TENANT, config(closures=[seminar], managed=managed))
+
+    loaded = storage.load(1, TENANT)
+
+    assert loaded.closures == [seminar]
+    assert loaded.managed == managed
+    raw = json.loads(storage.path(1).read_text())
+    assert raw["closures"] == [
+        {"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": "Seminar"}
+    ]
+
+
+def test_file_written_before_closures_existed_is_still_valid(storage):
+    write_raw(
+        storage,
+        1,
+        {
+            "version": 1,
+            "tenant_uuid": TENANT,
+            "country": "NL",
+            "managed": [{"date": "2027-03-29", "key": "Easter Monday"}],
+        },
+    )
+
+    loaded = storage.load(1, TENANT)
+
+    assert loaded.closures == []
+    assert loaded.managed == [Desired(datetime.date(2027, 3, 29), "Easter Monday")]
+
+
+@pytest.mark.parametrize(
+    "closures",
+    [
+        "nope",
+        [{"start": "2027-11-19T12:00"}],
+        [{"start": "bad", "end": "2027-11-20T14:00"}],
+        [{"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": 3}],
+        ["x"],
+    ],
+)
+def test_invalid_closures_are_rejected(storage, closures):
+    write_raw(
+        storage,
+        1,
+        {"version": 1, "tenant_uuid": TENANT, "country": "NL", "closures": closures},
+    )
+
+    with pytest.raises(StorageError):
+        storage.load(1, TENANT)
 
 
 def test_load_for_another_tenant_is_none(storage):

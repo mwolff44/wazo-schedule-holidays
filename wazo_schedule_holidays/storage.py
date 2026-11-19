@@ -7,7 +7,14 @@ One file ``<directory>/<schedule_id>.json`` per schedule::
 
     {"version": 1, "tenant_uuid": "...", "country": "NL", "subdivision": null,
      "excluded": ["Good Friday"],
-     "managed": [{"date": "2027-03-29", "key": "Easter Monday"}]}
+     "closures": [{"start": "2027-11-19T12:00", "end": "2027-11-20T14:00",
+                   "label": "Seminar"}],
+     "managed": [{"date": "2027-03-29", "key": "Easter Monday"},
+                 {"date": "2027-11-19", "key": "Seminar",
+                  "hours_start": "12:00", "hours_end": "23:59"}]}
+
+``closures`` and the hours of ``managed`` entries are optional (files written
+before one-off closures existed are still valid; hours default to the full day).
 
 Writes are atomic (temporary file + ``os.replace``). ``lock`` serialises the
 read-modify-write cycles of the confd process and of the cron CLI with
@@ -28,7 +35,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .sync import Desired
+from .sync import HOURS_END, HOURS_START, Closure, Desired
 
 CONFIG_VERSION = 1
 DEFAULT_DIRECTORY = "/var/lib/wazo-schedule-holidays"
@@ -49,6 +56,7 @@ class HolidayConfig:
     country: str
     subdivision: str | None = None
     excluded: list[str] = field(default_factory=list)
+    closures: list[Closure] = field(default_factory=list)
     managed: list[Desired] = field(default_factory=list)
 
 
@@ -73,6 +81,7 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
     country = raw.get("country")
     subdivision = raw.get("subdivision")
     excluded = raw.get("excluded", [])
+    closures_raw = raw.get("closures", [])
     managed_raw = raw.get("managed", [])
     if not isinstance(tenant_uuid, str) or not tenant_uuid:
         raise StorageError("missing tenant_uuid")
@@ -82,8 +91,23 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
         raise StorageError("invalid subdivision")
     if not _is_str_list(excluded):
         raise StorageError("excluded must be a list of strings")
+    if not isinstance(closures_raw, list):
+        raise StorageError("closures must be a list")
     if not isinstance(managed_raw, list):
         raise StorageError("managed must be a list")
+    closures = []
+    for entry in closures_raw:
+        try:
+            label = entry.get("label")
+            closures.append(
+                Closure(
+                    start=datetime.datetime.fromisoformat(entry["start"]),
+                    end=datetime.datetime.fromisoformat(entry["end"]),
+                    label=None if label is None else _require_str(label),
+                )
+            )
+        except (AttributeError, KeyError, TypeError, ValueError) as exc:
+            raise StorageError(f"invalid closure: {entry!r}") from exc
     managed = []
     for entry in managed_raw:
         try:
@@ -91,6 +115,8 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
                 Desired(
                     date=datetime.date.fromisoformat(entry["date"]),
                     key=_require_str(entry["key"]),
+                    hours_start=_require_str(entry.get("hours_start", HOURS_START)),
+                    hours_end=_require_str(entry.get("hours_end", HOURS_END)),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -99,6 +125,7 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
         country=country,
         subdivision=subdivision,
         excluded=list(excluded),
+        closures=closures,
         managed=managed,
     )
 
@@ -116,8 +143,21 @@ def _encode(tenant_uuid: str, config: HolidayConfig) -> dict:
         "country": config.country,
         "subdivision": config.subdivision,
         "excluded": list(config.excluded),
+        "closures": [
+            {
+                "start": closure.start.isoformat(timespec="minutes"),
+                "end": closure.end.isoformat(timespec="minutes"),
+                "label": closure.label,
+            }
+            for closure in config.closures
+        ],
         "managed": [
-            {"date": entry.date.isoformat(), "key": entry.key}
+            {
+                "date": entry.date.isoformat(),
+                "key": entry.key,
+                "hours_start": entry.hours_start,
+                "hours_end": entry.hours_end,
+            }
             for entry in config.managed
         ],
     }

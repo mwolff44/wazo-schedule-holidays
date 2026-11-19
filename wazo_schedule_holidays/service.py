@@ -29,9 +29,11 @@ from .exceptions import ConfigNotFound, InvalidConfig, SyncInProgress
 from .holiday_calendar import holidays_for
 from .storage import ConfigStorage, HolidayConfig, LockedError
 from .sync import (
+    Closure,
     Desired,
     Destination,
     Provider,
+    Slot,
     compute_desired,
     local_today,
     period_kwargs,
@@ -39,6 +41,8 @@ from .sync import (
     signature,
 )
 
+MAX_CLOSURES = 100
+MAX_CLOSURE_DAYS = 366
 KEY_YEARS = 6  # some holidays only exist every few years (e.g. Liberation Day, NL)
 PERIOD_COLUMNS = (
     "hours",
@@ -58,7 +62,7 @@ class SyncResult:
     today: datetime.date
     changed: bool
     added: list[Desired]
-    removed: list[tuple[int, int]]  # (month, day) of the removed periods
+    removed: list[Slot]  # (month, day, hours_start, hours_end) of removed periods
     managed: list[Desired]
 
 
@@ -94,16 +98,20 @@ class HolidaysService:
         country: str,
         subdivision: str | None,
         excluded: Iterable[str],
+        closures: Iterable[Closure] = (),
     ) -> HolidayConfig:
         schedule = self._schedule(schedule_id, tenant_uuids)
         excluded = list(dict.fromkeys(excluded))
+        closures = list(closures)
         self._validate(schedule, country, subdivision, excluded)
+        self._validate_closures(closures)
         with self._locked(schedule_id):
             previous = self._storage.load(schedule_id, schedule.tenant_uuid)
             config = HolidayConfig(
                 country=country,
                 subdivision=subdivision,
                 excluded=excluded,
+                closures=closures,
                 managed=previous.managed if previous else [],
             )
             self._storage.save(schedule_id, schedule.tenant_uuid, config)
@@ -140,6 +148,7 @@ class HolidaysService:
             config.excluded,
             today,
             self._provider,
+            config.closures,
         )
         existing = list(schedule.exceptional_periods)
         plan = plan_sync(existing, config.managed, desired, destination)
@@ -226,6 +235,30 @@ class HolidaysService:
         unknown = [key for key in excluded if key not in known]
         if unknown:
             raise InvalidConfig("excluded", f"unknown holidays: {', '.join(unknown)}")
+
+    @staticmethod
+    def _validate_closures(closures: list[Closure]) -> None:
+        if len(closures) > MAX_CLOSURES:
+            raise InvalidConfig(
+                "closures", f"at most {MAX_CLOSURES} closures are allowed"
+            )
+        for closure in closures:
+            if closure.start.second or closure.start.microsecond:
+                raise InvalidConfig("closures", "start must be a whole minute")
+            if closure.end.second or closure.end.microsecond:
+                raise InvalidConfig("closures", "end must be a whole minute")
+            if closure.start.tzinfo or closure.end.tzinfo:
+                raise InvalidConfig(
+                    "closures", "times are local to the schedule: no UTC offset"
+                )
+            if closure.start >= closure.end:
+                raise InvalidConfig("closures", "start must be before end")
+            if (closure.end.date() - closure.start.date()).days >= MAX_CLOSURE_DAYS:
+                raise InvalidConfig(
+                    "closures", f"a closure spans at most {MAX_CLOSURE_DAYS} days"
+                )
+        if len(set(closures)) != len(closures):
+            raise InvalidConfig("closures", "duplicate closure")
 
     @contextlib.contextmanager
     def _locked(self, schedule_id: int) -> Iterator[None]:

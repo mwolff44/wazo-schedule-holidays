@@ -23,6 +23,7 @@ from .schema import (
     ScheduleHolidaysSyncSchema,
 )
 from .storage import StorageError
+from .sync import Closure
 
 
 def _input_error(message):
@@ -118,6 +119,7 @@ class ScheduleHolidaysResource(_ScheduleResource):
             form["country"],
             form["subdivision"],
             form["excluded"],
+            [Closure(**item) for item in form["closures"]],
         )
         return "", 204
 
@@ -139,7 +141,10 @@ class ScheduleHolidaysSyncResource(_ScheduleResource):
             "changed": result.changed,
             "today": result.today,
             "added": result.added,
-            "removed": [{"month": m, "day": d} for m, d in result.removed],
+            "removed": [
+                {"month": m, "day": d, "hours_start": hs, "hours_end": he}
+                for m, d, hs, he in result.removed
+            ],
             "managed": result.managed,
         }
         return ScheduleHolidaysSyncSchema().dump(payload)
