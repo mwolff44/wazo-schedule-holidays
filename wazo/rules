@@ -28,6 +28,10 @@ case "$1" in
         mkdir -p ${DATA_DIR}
         chown www-data: ${DATA_DIR}
         chmod 750 ${DATA_DIR}
+        # plugind unpacks files as wazo-plugind: cron silently ignores a
+        # /etc/cron.d file that is not owned by root.
+        chown root:root /etc/cron.d/wazo-schedule-holidays
+        chmod 644 /etc/cron.d/wazo-schedule-holidays
         systemctl restart wazo-confd
         ;;
 
