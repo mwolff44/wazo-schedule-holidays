@@ -123,24 +123,25 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Les noms de pays viennent de `pycountry` (dépendance déjà présente dans confd).
 - La lib `holidays` est vendorisée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
 
-## Phase 8 — fermetures ponctuelles (à implémenter)
-Besoin : fermer un jour précis, éventuellement sur une plage horaire (ex. 2027-11-20 de 09:00 à 12:00,
-ou « demain, inventaire »), sans gérer la période à la main. Une période confd n'a pas d'année : une
-période manuelle se redéclenche chaque année et doit être supprimée à la main.
-- Config JSON : nouvelle liste `closures` (`[{"date":"2027-11-20","start":"09:00","end":"12:00","label":"..."}]`),
-  `start`/`end` facultatifs (défaut `00:00-23:59`). `version` du JSON incrémentée, lecture des anciens
-  fichiers inchangée.
-- API : `closures` ajouté au `PUT/GET /schedules/{id}/holidays` (validation : date réelle, `start < end`,
-  pas de doublon) ; `api.yml` et ACL inchangés. Option : `closures` modifiable sans pays configuré.
-- Synchro : comme les fériés, une fermeture n'est posée que si sa date est dans `[today, today + 365 j[`
-  (sinon elle se déclencherait un an trop tôt) ; retirée dès que sa date est passée ; période créée
-  avec la destination `closed_destination`, enregistrée dans `managed` (clé = `closure:<date>:<start>-<end>`).
-- Signature : une fermeture partielle (heures ≠ `00:00-23:59`) n'a pas la signature du plugin ; la
-  reconnaissance doit donc reposer aussi sur la liste `managed` (heures comprises), à vérifier
-  (période manuelle identique non touchée, idempotence, `DELETE .../holidays` retire aussi les `closures`).
-- Tests : fenêtre (veille / jour même / J+365), plage partielle, doublon avec un férié, idempotence,
-  contrats confd.
-- Contournement en attendant : période manuelle (UI ou `PUT /schedules/{id}`), à supprimer après la date.
+## Phase 8 — fermetures ponctuelles (implémentée)
+Besoin : fermer une plage précise (ex. séminaire du jeudi 2027-11-19 12:00 au vendredi 2027-11-20
+14:00, ou 2027-11-20 de 09:00 à 12:00) sans gérer les périodes à la main. Une période confd n'a pas
+d'année : une période manuelle se redéclenche chaque année.
+- Config JSON : liste `closures` `[{"start":"2027-11-19T12:00","end":"2027-11-20T14:00","label":"..."}]`
+  (heures locales du schedule, à la minute, `end` inclus comme le `23:59`). Les entrées `managed`
+  gagnent `hours_start`/`hours_end` (défaut plein jour). Rétrocompatible : `version` reste 1.
+- Une plage est découpée en un *créneau* par jour : premier jour `start→23:59`, jours intermédiaires
+  `00:00→23:59`, dernier jour `00:00→end` (omis si `end` = minuit). Même fenêtre `[today, today + 365 j[`
+  appliquée jour par jour : un créneau futur attend son tour, un créneau passé est retiré.
+- Signature = créneau `(mois, jour, heure début, heure fin)` ; `plan_sync` raisonne par créneau. Une
+  période manuelle de même créneau n'est jamais touchée. Un férié l'emporte sur un créneau plein jour
+  identique ; une fermeture partielle le même jour d'un férié donne deux périodes.
+- API : `closures` dans `PUT/GET /schedules/{id}/holidays` (remplacé en bloc ; validation : minute
+  entière, pas de fuseau, `start < end`, ≤ 366 jours, ≤ 100 fermetures, pas de doublon) ;
+  `managed`, `added` et `removed` exposent les heures. ACL inchangés.
+- Limites : un pays reste obligatoire dans la config ; les fermetures échues ne sont pas purgées
+  automatiquement de la config (ignorées, retirées par un `PUT`).
+- Tests : unitaires (sync, storage, service) et contrat HTTP.
 
 ## Conventions et outillage (validé, modèle : `wazo-calld-queue`)
 - Licence **GPL-3.0+** (cohérence avec confd et l'écosystème Wazo) ; en-tête `Copyright 2026 The Wazo Authors  (see the AUTHORS file)` + `SPDX-License-Identifier: GPL-3.0+` dans chaque fichier Python.
