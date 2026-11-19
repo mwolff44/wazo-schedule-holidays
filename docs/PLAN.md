@@ -123,6 +123,25 @@ VM 26.10 : schedule, `PUT` NL, sync, `GET /schedules/{id}`, appel simulé un jou
 - Les noms de pays viennent de `pycountry` (dépendance déjà présente dans confd).
 - La lib `holidays` est vendorisée (non fournie par apt sur bookworm) : mise à jour = nouvelle version du plugin.
 
+## Phase 8 — fermetures ponctuelles (à implémenter)
+Besoin : fermer un jour précis, éventuellement sur une plage horaire (ex. 2027-11-20 de 09:00 à 12:00,
+ou « demain, inventaire »), sans gérer la période à la main. Une période confd n'a pas d'année : une
+période manuelle se redéclenche chaque année et doit être supprimée à la main.
+- Config JSON : nouvelle liste `closures` (`[{"date":"2027-11-20","start":"09:00","end":"12:00","label":"..."}]`),
+  `start`/`end` facultatifs (défaut `00:00-23:59`). `version` du JSON incrémentée, lecture des anciens
+  fichiers inchangée.
+- API : `closures` ajouté au `PUT/GET /schedules/{id}/holidays` (validation : date réelle, `start < end`,
+  pas de doublon) ; `api.yml` et ACL inchangés. Option : `closures` modifiable sans pays configuré.
+- Synchro : comme les fériés, une fermeture n'est posée que si sa date est dans `[today, today + 365 j[`
+  (sinon elle se déclencherait un an trop tôt) ; retirée dès que sa date est passée ; période créée
+  avec la destination `closed_destination`, enregistrée dans `managed` (clé = `closure:<date>:<start>-<end>`).
+- Signature : une fermeture partielle (heures ≠ `00:00-23:59`) n'a pas la signature du plugin ; la
+  reconnaissance doit donc reposer aussi sur la liste `managed` (heures comprises), à vérifier
+  (période manuelle identique non touchée, idempotence, `DELETE .../holidays` retire aussi les `closures`).
+- Tests : fenêtre (veille / jour même / J+365), plage partielle, doublon avec un férié, idempotence,
+  contrats confd.
+- Contournement en attendant : période manuelle (UI ou `PUT /schedules/{id}`), à supprimer après la date.
+
 ## Conventions et outillage (validé, modèle : `wazo-calld-queue`)
 - Licence **GPL-3.0+** (cohérence avec confd et l'écosystème Wazo) ; en-tête `Copyright 2026 The Wazo Authors  (see the AUTHORS file)` + `SPDX-License-Identifier: GPL-3.0+` dans chaque fichier Python.
 - `pyproject.toml` (black, isort, flake8, mypy), `.pre-commit-config.yaml` (dont `wazo-copyright-check`), `tox.ini`, `requirements-test.txt`, CI GitHub (linters + pytest, Python 3.11). `vendor/` exclu de tous les outils.
@@ -192,6 +211,6 @@ Test sur un schedule `Europe/Paris` avec une destination de fermeture `sound` et
 - **CLI** : `python3 -m wazo_schedule_holidays --dry-run` OK (`0 synchronised` sans configuration, puis avec).
 
 ### Reste à valider sur la stack
-- **Cron** : présence de `/etc/cron.d/wazo-schedule-holidays` et première exécution réelle (04:07).
+- **Cron** : le 2026-11-19, `/etc/cron.d/wazo-schedule-holidays` appartenait à `wazo-plugind` (`-rw-r--r--`) et cron l'a ignoré (cron exige root). Correctif : `rules install` fait `chown root:root` + `chmod 644`. À revalider après réinstallation (propriétaire root, première exécution réelle 04:07).
 - **Désinstallation** : non testée (`rules uninstall` conserve volontairement les JSON).
 - Moselle (`57`), plusieurs tenants, et changement de pays sur un schedule déjà synchronisé.
