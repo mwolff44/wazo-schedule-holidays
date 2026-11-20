@@ -124,8 +124,8 @@ paths:
       description: |
         **Required ACL:** `confd.schedules.{schedule_id}.holidays.sync.create`
 
-        Creates one full-day exceptional period per holiday in the next 365
-        days, using the closed destination of the schedule, and removes the
+        Creates one full-day exceptional period per holiday (and one period per
+        day of each one-off closure) in the next 365 days, using the closed destination of the schedule, and removes the
         periods created previously that are no longer wanted. wazo-agid ignores
         the year of a period: the synchronisation must therefore run every day.
       tags:
@@ -170,14 +170,45 @@ definitions:
         description: Keys of the holidays that must not close the schedule
         items:
           type: string
+      closures:
+        type: array
+        description: |
+          One-off closures (for instance a seminar). Replaced as a whole by
+          each `PUT` (omit it to remove them). Each closure becomes one
+          exceptional period per day, since a period has no year: the periods
+          are created once the date is within the next 365 days and removed once
+          it is past. Expired closures are ignored and can be removed by a `PUT`.
+          At most 100 closures, each spanning at most 366 days.
+        items:
+          $ref: '#/definitions/ScheduleHolidaysClosure'
       managed:
         type: array
         readOnly: true
-        description: Holidays for which the plugin created a period
+        description: Periods (holidays and closures) created by the plugin
         items:
           $ref: '#/definitions/ScheduleHolidaysEntry'
     required:
     - country
+  ScheduleHolidaysClosure:
+    properties:
+      start:
+        type: string
+        example: '2027-11-19T12:00'
+        description: |
+          First minute of the closure, `YYYY-MM-DDTHH:MM`, in the timezone of the
+          schedule (no UTC offset, no seconds)
+      end:
+        type: string
+        example: '2027-11-20T14:00'
+        description: |
+          Last minute of the closure (inclusive, like the `23:59` of a full day),
+          same format. Must be after `start`.
+      label:
+        type: string
+        description: Optional name, reported as `key` in `managed` (default `closure`)
+    required:
+    - start
+    - end
   ScheduleHolidaysEntry:
     properties:
       date:
@@ -185,6 +216,12 @@ definitions:
         format: date
       key:
         type: string
+      hours_start:
+        type: string
+        description: '`00:00` for a holiday; may differ for a closure'
+      hours_end:
+        type: string
+        description: '`23:59` for a holiday; may differ for a closure'
   ScheduleHolidaysSync:
     properties:
       dry_run:
@@ -207,6 +244,10 @@ definitions:
               type: integer
             day:
               type: integer
+            hours_start:
+              type: string
+            hours_end:
+              type: string
       managed:
         type: array
         items:

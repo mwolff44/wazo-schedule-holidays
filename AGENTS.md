@@ -14,8 +14,11 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
 - Exceptional periods (`closed`) are evaluated before opened periods and need a destination:
   we copy the schedule's `closed_destination`.
 - confd stores no id/label for periods and recreates them on every write. Periods created by the
-  plugin are recognised by **signature** (`closed`, `00:00-23:59`, all week days, one month day,
-  one month) and only if listed in the `managed` entries of the schedule's JSON file.
+  plugin are recognised by **signature** (`closed`, all week days, one month day, one month, given
+  hours: a *slot*) and only if listed in the `managed` entries of the schedule's JSON file.
+- Holidays are full-day slots (`00:00-23:59`). A one-off *closure* (`closures` in the JSON, a
+  date-time range) is split into one slot per day (hours cut on the first and last day) and follows
+  the same window as holidays.
 
 ## Layout
 

@@ -56,6 +56,24 @@ curl -sk -X POST -H "$H" "$BASE/schedules/1/holidays/sync?dry_run=true"
 curl -sk -X POST -H "$H" "$BASE/schedules/1/holidays/sync"
 ```
 
+### One-off closures
+
+A closure is a date-time range in the schedule timezone, for instance a seminar from Thursday
+19 November 2027 12:00 to Friday 20 November 2027 14:00 (or a single morning, 09:00 to 12:00):
+
+```sh
+curl -sk -X PUT -H "$H" -H 'Content-Type: application/json' -d '{"country":"FR","subdivision":"6AE",
+  "closures":[{"start":"2027-11-19T12:00","end":"2027-11-20T14:00","label":"Seminar"}]}' \
+  "$BASE/schedules/1/holidays"
+```
+
+Like the holidays, a closure is applied by `sync`: as a period has no year, it becomes one period
+per day (12:00-23:59, then 00:00-14:00, with full days in between) only when its date is within the
+next 365 days, and is removed once past. `end` is inclusive to the minute. `closures` is replaced as a
+whole by each `PUT` (omit it to remove them): `GET` first, then `PUT` the full list. Expired closures
+are ignored and can be dropped by a `PUT`. A country is still required (use `excluded` to skip
+unwanted holidays).
+
 `PUT` only stores the configuration; `sync` applies it. `DELETE` also removes the periods the plugin
 created. Errors: `400` invalid configuration, `404` unknown schedule (or other tenant) or no
 configuration, `409` the schedule is being updated by another request.

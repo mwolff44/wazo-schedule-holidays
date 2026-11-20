@@ -9,11 +9,24 @@ from wazo_confd.helpers.mallow import BaseSchema
 class ManagedHolidaySchema(BaseSchema):
     date = fields.Date(dump_only=True)
     key = fields.String(dump_only=True)
+    hours_start = fields.String(dump_only=True)
+    hours_end = fields.String(dump_only=True)
 
 
 class RemovedDaySchema(BaseSchema):
     month = fields.Integer(dump_only=True)
     day = fields.Integer(dump_only=True)
+    hours_start = fields.String(dump_only=True)
+    hours_end = fields.String(dump_only=True)
+
+
+class ClosureSchema(BaseSchema):
+    # Naive local date-times (schedule timezone), minute precision.
+    start = fields.DateTime(format="%Y-%m-%dT%H:%M", required=True)
+    end = fields.DateTime(format="%Y-%m-%dT%H:%M", required=True)
+    label = fields.String(
+        allow_none=True, load_default=None, validate=Length(min=1, max=128)
+    )
 
 
 class ScheduleHolidaysSchema(BaseSchema):
@@ -23,6 +36,9 @@ class ScheduleHolidaysSchema(BaseSchema):
     )
     excluded = fields.List(
         fields.String(validate=Length(min=1, max=255)), load_default=list
+    )
+    closures = fields.List(
+        fields.Nested(ClosureSchema), load_default=list, validate=Length(max=100)
     )
     managed = fields.List(fields.Nested(ManagedHolidaySchema), dump_only=True)
 

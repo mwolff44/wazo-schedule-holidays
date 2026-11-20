@@ -8,8 +8,10 @@ import pytest
 
 from wazo_schedule_holidays.holiday_calendar import Holiday
 from wazo_schedule_holidays.sync import (
+    Closure,
     Desired,
     Destination,
+    closure_slots,
     compute_desired,
     local_today,
     period_kwargs,
@@ -325,3 +327,154 @@ def test_signature_requires_every_field_to_match(bad):
     plan = plan_sync([period], desired, [], DEST)
 
     assert plan.remove == []
+
+
+DT = datetime.datetime
+
+
+def closure(start, end, label=None):
+    return Closure(start=DT(*start), end=DT(*end), label=label)
+
+
+def slots(items):
+    return [(i.date, i.hours_start, i.hours_end) for i in items]
+
+
+def test_a_multi_day_closure_is_split_with_the_hours_cut_at_both_ends():
+    seminar = closure((2027, 11, 19, 12, 0), (2027, 11, 21, 14, 0), "Seminar")
+
+    items = closure_slots(seminar)
+
+    assert slots(items) == [
+        (D(2027, 11, 19), "12:00", "23:59"),
+        (D(2027, 11, 20), "00:00", "23:59"),
+        (D(2027, 11, 21), "00:00", "14:00"),
+    ]
+    assert {item.key for item in items} == {"Seminar"}
+
+
+def test_the_seminar_example_thursday_noon_to_friday_2pm():
+    items = closure_slots(closure((2027, 11, 18, 12, 0), (2027, 11, 19, 14, 0)))
+
+    assert datetime.date(2027, 11, 18).strftime("%A") == "Thursday"
+    assert slots(items) == [
+        (D(2027, 11, 18), "12:00", "23:59"),
+        (D(2027, 11, 19), "00:00", "14:00"),
+    ]
+
+
+def test_a_closure_within_one_day_keeps_both_times():
+    items = closure_slots(closure((2027, 11, 20, 9, 0), (2027, 11, 20, 12, 0)))
+
+    assert slots(items) == [(D(2027, 11, 20), "09:00", "12:00")]
+    assert items[0].key == "closure"
+
+
+def test_a_closure_ending_at_midnight_does_not_touch_the_last_day():
+    items = closure_slots(closure((2027, 11, 19, 12, 0), (2027, 11, 21, 0, 0)))
+
+    assert slots(items) == [
+        (D(2027, 11, 19), "12:00", "23:59"),
+        (D(2027, 11, 20), "00:00", "23:59"),
+    ]
+
+
+def test_closure_slots_only_keep_the_window():
+    table = provider_for({})
+    seminar = closure((2026, 11, 16, 12, 0), (2026, 11, 19, 14, 0))
+
+    desired = compute_desired(
+        "NL", None, [], D(2026, 11, 18), table, closures=[seminar]
+    )
+
+    assert slots(desired) == [
+        (D(2026, 11, 18), "00:00", "23:59"),
+        (D(2026, 11, 19), "00:00", "14:00"),
+    ]
+
+
+def test_a_closure_beyond_the_window_is_kept_for_later():
+    far = closure((2027, 11, 18, 9, 0), (2027, 11, 18, 12, 0))
+    today = D(2026, 11, 18)
+
+    assert compute_desired("NL", None, [], today, provider_for({}), [far]) == []
+    # D+364 is the last day of the window [today, today + 365 days[
+    last = closure((2027, 11, 17, 9, 0), (2027, 11, 17, 12, 0))
+    assert len(compute_desired("NL", None, [], today, provider_for({}), [last])) == 1
+    assert compute_desired(
+        "NL", None, [], D(2026, 11, 19), provider_for({}), [far]
+    ) == [Desired(D(2027, 11, 18), "closure", "09:00", "12:00")]
+
+
+def test_a_closure_that_ended_yesterday_is_dropped():
+    past = closure((2026, 11, 17, 9, 0), (2026, 11, 17, 12, 0))
+
+    assert (
+        compute_desired("NL", None, [], D(2026, 11, 18), provider_for({}), [past]) == []
+    )
+
+
+def test_a_holiday_wins_over_a_full_day_closure_slot_of_the_same_day():
+    table = provider_for({2026: [holiday("C", D(2026, 12, 25))]})
+    full_day = closure((2026, 12, 24, 12, 0), (2026, 12, 26, 14, 0), "Bridge")
+
+    desired = compute_desired(
+        "NL", None, [], D(2026, 11, 18), table, closures=[full_day]
+    )
+
+    assert [(i.date, i.key, i.hours_start, i.hours_end) for i in desired] == [
+        (D(2026, 12, 24), "Bridge", "12:00", "23:59"),
+        (D(2026, 12, 25), "C", "00:00", "23:59"),
+        (D(2026, 12, 26), "Bridge", "00:00", "14:00"),
+    ]
+
+
+def test_a_partial_closure_on_a_holiday_keeps_both_periods():
+    table = provider_for({2026: [holiday("C", D(2026, 12, 25))]})
+    partial = closure((2026, 12, 25, 9, 0), (2026, 12, 25, 12, 0))
+
+    desired = compute_desired(
+        "NL", None, [], D(2026, 11, 18), table, closures=[partial]
+    )
+
+    assert slots(desired) == [
+        (D(2026, 12, 25), "00:00", "23:59"),
+        (D(2026, 12, 25), "09:00", "12:00"),
+    ]
+
+
+def test_period_kwargs_use_the_hours_of_the_slot():
+    kwargs = period_kwargs(Desired(D(2027, 11, 19), "S", "12:00", "23:59"), DEST)
+
+    assert (kwargs["hours_start"], kwargs["hours_end"]) == ("12:00", "23:59")
+    assert kwargs["month_days"] == [19] and kwargs["months_list"] == [11]
+
+
+def test_partial_closure_periods_are_managed_and_idempotent():
+    desired = closure_slots(closure((2027, 11, 19, 12, 0), (2027, 11, 20, 14, 0)))
+    first = plan_sync([], [], desired, DEST)
+    existing = apply(first, [])
+
+    second = plan_sync(existing, first.managed, desired, DEST)
+
+    assert len(first.add) == 2
+    assert not second.changed
+
+
+def test_expired_closure_periods_are_removed_and_manual_partials_are_kept():
+    desired = closure_slots(closure((2026, 11, 17, 9, 0), (2026, 11, 17, 12, 0)))
+    managed_period = build(desired[0])
+    manual = make_period(11, 17, hours=("14:00", "16:00"))
+
+    plan = plan_sync([managed_period, manual], desired, [], DEST)
+
+    assert plan.remove == [managed_period]
+
+
+def test_manual_period_identical_to_a_closure_slot_is_left_alone():
+    desired = closure_slots(closure((2027, 11, 20, 9, 0), (2027, 11, 20, 12, 0)))
+    manual = make_period(11, 20, hours=("09:00", "12:00"))
+
+    plan = plan_sync([manual], [], desired, DEST)
+
+    assert plan.add == [] and plan.remove == [] and plan.managed == []

@@ -191,12 +191,83 @@ def test_put_then_get_config(http):
         "country": "FR",
         "subdivision": "6AE",
         "excluded": ["Good Friday"],
+        "closures": [],
         "managed": [],
     }
     assert http.auth.acls == [
         "confd.schedules.1.holidays.update",
         "confd.schedules.1.holidays.read",
     ]
+
+
+def seminar_body():
+    start = datetime.date.today() + datetime.timedelta(days=10)
+    end = start + datetime.timedelta(days=1)
+    return (
+        {
+            "country": "NL",
+            "closures": [
+                {
+                    "start": f"{start.isoformat()}T12:00",
+                    "end": f"{end.isoformat()}T14:00",
+                    "label": "Seminar",
+                }
+            ],
+        },
+        start,
+        end,
+    )
+
+
+def test_put_then_get_closures(http):
+    body, _, _ = seminar_body()
+
+    assert http.put("/schedules/1/holidays", body).status_code == 204
+
+    assert http.get("/schedules/1/holidays").get_json()["closures"] == body["closures"]
+
+
+def test_sync_creates_the_partial_periods_of_a_closure(http):
+    body, start, end = seminar_body()
+    http.put("/schedules/1/holidays", body)
+
+    response = http.post("/schedules/1/holidays/sync")
+
+    assert response.status_code == 200
+    by_day = {
+        (p.months_list[0], p.month_days[0]): p.hours
+        for p in http.schedule.exceptional_periods
+        if (p.months_list[0], p.month_days[0])
+        in {(start.month, start.day), (end.month, end.day)}
+    }
+    assert by_day[(start.month, start.day)] == "12:00-23:59"
+    assert by_day[(end.month, end.day)] == "00:00-14:00"
+    added = [e for e in response.get_json()["added"] if e["key"] == "Seminar"]
+    assert [(e["hours_start"], e["hours_end"]) for e in added] == [
+        ("12:00", "23:59"),
+        ("00:00", "14:00"),
+    ]
+    assert http.post("/schedules/1/holidays/sync").get_json()["changed"] is False
+
+
+@pytest.mark.parametrize(
+    "closure",
+    [
+        {"start": "2027-11-20T14:00", "end": "2027-11-19T12:00"},
+        {"start": "2027-11-19T12:00"},
+        {"start": "2027-11-19", "end": "2027-11-20T14:00"},
+        {"start": "2027-11-19T12:00:30", "end": "2027-11-20T14:00"},
+        {"start": "2027-11-19T12:00Z", "end": "2027-11-20T14:00"},
+        {"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": ""},
+    ],
+)
+def test_put_rejects_invalid_closures(http, closure):
+    response = http.put(
+        "/schedules/1/holidays", {"country": "NL", "closures": [closure]}
+    )
+
+    assert response.status_code == 400
+    assert http.storage.list_schedule_ids() == []
 
 
 @pytest.mark.parametrize(
