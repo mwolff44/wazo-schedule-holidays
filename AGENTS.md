@@ -17,8 +17,12 @@ Plan and verified findings: `docs/PLAN.md` (read it before changing behaviour).
   plugin are recognised by **signature** (`closed`, all week days, one month day, one month, given
   hours: a *slot*) and only if listed in the `managed` entries of the schedule's JSON file.
 - Holidays are full-day slots (`00:00-23:59`). A one-off *closure* (`closures` in the JSON, a
-  date-time range) is split into one slot per day (hours cut on the first and last day) and follows
-  the same window as holidays.
+  date-time range with a stable `id`) is split into one slot per day (hours cut on the first and last
+  day) and follows the same window as holidays.
+- Holidays (`/holidays`) and closures (`/closures`) are independent resources sharing one JSON file,
+  one lock and one sync (`country` is null when a schedule only has closures; the file is deleted when
+  it has neither). Writing a closure syncs at once; `PUT /holidays` only stores. `DELETE /holidays`
+  keeps the closures. `POST .../exceptional-periods/sync` applies both (`.../holidays/sync` is an alias).
 
 ## Layout
 

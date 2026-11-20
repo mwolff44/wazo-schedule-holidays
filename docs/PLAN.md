@@ -136,12 +136,27 @@ d'année : une période manuelle se redéclenche chaque année.
 - Signature = créneau `(mois, jour, heure début, heure fin)` ; `plan_sync` raisonne par créneau. Une
   période manuelle de même créneau n'est jamais touchée. Un férié l'emporte sur un créneau plein jour
   identique ; une fermeture partielle le même jour d'un férié donne deux périodes.
-- API : `closures` dans `PUT/GET /schedules/{id}/holidays` (remplacé en bloc ; validation : minute
-  entière, pas de fuseau, `start < end`, ≤ 366 jours, ≤ 100 fermetures, pas de doublon) ;
-  `managed`, `added` et `removed` exposent les heures. ACL inchangés.
-- Limites : un pays reste obligatoire dans la config ; les fermetures échues ne sont pas purgées
-  automatiquement de la config (ignorées, retirées par un `PUT`).
+- Validation (l'API est reprise par la phase 9, ressource `/closures`) : minute entière, pas de fuseau,
+  `start < end`, ≤ 366 jours, ≤ 100 fermetures, pas de doublon ; `managed`, `added` et `removed`
+  exposent les heures.
+- Limites : les fermetures échues ne sont pas purgées automatiquement de la config (ignorées, supprimées
+  par `DELETE`).
 - Tests : unitaires (sync, storage, service) et contrat HTTP.
+
+## Phase 9 — API séparées fériés / fermetures (implémentée)
+Les fériés et les fermetures sont deux ressources indépendantes qui partagent un seul JSON, un seul
+verrou et une seule synchro (un schedule n'a qu'un jeu de périodes exceptionnelles).
+- `/schedules/{id}/holidays` : inchangé, sauf que `closures` en sort et que le pays est facultatif dans
+  le stockage (`country: null` = fermetures seules). `PUT` conserve les fermetures ; `DELETE` retire les
+  périodes de fériés et garde les fermetures (le fichier disparaît s'il n'y a ni pays ni fermeture).
+- `/schedules/{id}/closures` (`GET` liste, `POST` 201) et `/closures/{closure_id}` (`GET`/`PUT`/`DELETE`),
+  ACL `confd.schedules.{id}.closures[.{closure_id}].read/create/update/delete`. Chaque fermeture a un `id`
+  (uuid4 ; une fermeture sans id dans un ancien fichier reçoit un id déterministe).
+- Une écriture de fermeture synchronise le schedule aussitôt. Si la synchro échoue, la fermeture reste
+  stockée et le cron reprend (les périodes posées restent suivies par `managed`, `closure_id` en option).
+- Synchro : `POST /schedules/{id}/exceptional-periods/sync` (ACL `...exceptional_periods.sync.create`),
+  l'ancienne route `.../holidays/sync` est conservée en alias ; elles appliquent fériés et fermetures.
+- Un férié l'emporte sur un créneau plein jour identique ; unicité d'une fermeture sur (début, fin, libellé).
 
 ## Conventions et outillage (validé, modèle : `wazo-calld-queue`)
 - Licence **GPL-3.0+** (cohérence avec confd et l'écosystème Wazo) ; en-tête `Copyright 2026 The Wazo Authors  (see the AUTHORS file)` + `SPDX-License-Identifier: GPL-3.0+` dans chaque fichier Python.
