@@ -114,8 +114,8 @@ class Harness:
     def put(self, url, body):
         return self.client.put(url, json=body, headers=HEADERS)
 
-    def post(self, url):
-        return self.client.post(url, headers=HEADERS)
+    def post(self, url, body=None):
+        return self.client.post(url, json=body, headers=HEADERS)
 
     def delete(self, url):
         return self.client.delete(url, headers=HEADERS)
@@ -191,7 +191,6 @@ def test_put_then_get_config(http):
         "country": "FR",
         "subdivision": "6AE",
         "excluded": ["Good Friday"],
-        "closures": [],
         "managed": [],
     }
     assert http.auth.acls == [
@@ -203,51 +202,108 @@ def test_put_then_get_config(http):
 def seminar_body():
     start = datetime.date.today() + datetime.timedelta(days=10)
     end = start + datetime.timedelta(days=1)
-    return (
-        {
-            "country": "NL",
-            "closures": [
-                {
-                    "start": f"{start.isoformat()}T12:00",
-                    "end": f"{end.isoformat()}T14:00",
-                    "label": "Seminar",
-                }
-            ],
-        },
-        start,
-        end,
-    )
+    body = {
+        "start": f"{start.isoformat()}T12:00",
+        "end": f"{end.isoformat()}T14:00",
+        "label": "Seminar",
+    }
+    return body, start, end
 
 
-def test_put_then_get_closures(http):
-    body, _, _ = seminar_body()
-
-    assert http.put("/schedules/1/holidays", body).status_code == 204
-
-    assert http.get("/schedules/1/holidays").get_json()["closures"] == body["closures"]
-
-
-def test_sync_creates_the_partial_periods_of_a_closure(http):
+def test_post_closure_synchronises_the_schedule_at_once(http):
     body, start, end = seminar_body()
-    http.put("/schedules/1/holidays", body)
 
-    response = http.post("/schedules/1/holidays/sync")
+    response = http.post("/schedules/1/closures", body)
 
-    assert response.status_code == 200
-    by_day = {
+    assert response.status_code == 201
+    created = response.get_json()
+    assert created["id"] and created["start"] == body["start"]
+    assert created["label"] == "Seminar"
+    assert http.auth.acls == ["confd.schedules.1.closures.create"]
+    hours = {
         (p.months_list[0], p.month_days[0]): p.hours
         for p in http.schedule.exceptional_periods
-        if (p.months_list[0], p.month_days[0])
-        in {(start.month, start.day), (end.month, end.day)}
     }
-    assert by_day[(start.month, start.day)] == "12:00-23:59"
-    assert by_day[(end.month, end.day)] == "00:00-14:00"
-    added = [e for e in response.get_json()["added"] if e["key"] == "Seminar"]
-    assert [(e["hours_start"], e["hours_end"]) for e in added] == [
-        ("12:00", "23:59"),
-        ("00:00", "14:00"),
+    assert hours == {
+        (start.month, start.day): "12:00-23:59",
+        (end.month, end.day): "00:00-14:00",
+    }
+    for period in http.schedule.exceptional_periods:
+        assert isinstance(period, ScheduleTime) and period.mode == "closed"
+        assert (period.action, period.actionid) == ("voicemail", "12")
+    # a closure needs no holidays configuration
+    assert http.get("/schedules/1/holidays").status_code == 404
+
+
+def test_list_get_put_delete_closure(http):
+    body, start, _ = seminar_body()
+    created = http.post("/schedules/1/closures", body).get_json()
+    url = f"/schedules/1/closures/{created['id']}"
+
+    listing = http.get("/schedules/1/closures").get_json()
+    one = http.get(url)
+    later = {**body, "start": f"{start.isoformat()}T08:00", "label": None}
+    put = http.put(url, later)
+    after = http.get(url).get_json()
+    deleted = http.delete(url)
+
+    assert listing == {"total": 1, "items": [created]}
+    assert one.get_json() == created
+    assert put.status_code == 204
+    assert after["start"] == later["start"] and after["label"] is None
+    assert after["id"] == created["id"]
+    assert deleted.status_code == 204
+    assert http.get(url).status_code == 404
+    assert http.get("/schedules/1/closures").get_json() == {"total": 0, "items": []}
+    assert http.schedule.exceptional_periods == []
+    assert http.storage.list_schedule_ids() == []
+    assert http.auth.acls[2:6] == [
+        f"confd.schedules.1.closures.{created['id']}.read",
+        f"confd.schedules.1.closures.{created['id']}.update",
+        f"confd.schedules.1.closures.{created['id']}.read",
+        f"confd.schedules.1.closures.{created['id']}.delete",
     ]
-    assert http.post("/schedules/1/holidays/sync").get_json()["changed"] is False
+
+
+def test_closures_and_holidays_are_independent_resources(http):
+    body, start, _ = seminar_body()
+    http.post("/schedules/1/closures", body)
+    http.put("/schedules/1/holidays", {"country": "NL"})
+    http.post("/schedules/1/exceptional-periods/sync")
+    assert (12, 25) in days(http.schedule)
+
+    assert http.delete("/schedules/1/holidays").status_code == 204
+
+    next_day = start + datetime.timedelta(days=1)
+    assert days(http.schedule) == sorted(
+        [(start.month, start.day), (next_day.month, next_day.day)]
+    )
+    assert http.get("/schedules/1/holidays").status_code == 404
+    assert http.get("/schedules/1/closures").get_json()["total"] == 1
+
+
+def test_put_holidays_keeps_the_closures(http):
+    body, _, _ = seminar_body()
+    http.post("/schedules/1/closures", body)
+
+    http.put("/schedules/1/holidays", {"country": "NL"})
+
+    assert http.get("/schedules/1/closures").get_json()["total"] == 1
+    assert "closures" not in http.get("/schedules/1/holidays").get_json()
+
+
+def test_both_sync_routes_apply_the_configuration(http):
+    http.put("/schedules/1/holidays", {"country": "NL"})
+
+    new = http.post("/schedules/1/exceptional-periods/sync")
+    alias = http.post("/schedules/1/holidays/sync")
+
+    assert new.status_code == 200 and new.get_json()["changed"] is True
+    assert alias.get_json()["changed"] is False
+    assert http.auth.acls[-2:] == [
+        "confd.schedules.1.exceptional_periods.sync.create",
+        "confd.schedules.1.holidays.sync.create",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -261,13 +317,23 @@ def test_sync_creates_the_partial_periods_of_a_closure(http):
         {"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": ""},
     ],
 )
-def test_put_rejects_invalid_closures(http, closure):
-    response = http.put(
-        "/schedules/1/holidays", {"country": "NL", "closures": [closure]}
-    )
+def test_post_rejects_invalid_closures(http, closure):
+    response = http.post("/schedules/1/closures", closure)
 
     assert response.status_code == 400
     assert http.storage.list_schedule_ids() == []
+
+
+def test_closure_errors_and_tenant_isolation(http):
+    body, _, _ = seminar_body()
+
+    assert http.get("/schedules/1/closures/nope").status_code == 404
+    assert http.put("/schedules/1/closures/nope", body).status_code == 404
+    assert http.delete("/schedules/1/closures/nope").status_code == 404
+    assert http.get("/schedules/2/closures").status_code == 404
+    assert http.post("/schedules/2/closures", body).status_code == 404
+    assert http.post("/schedules/2/exceptional-periods/sync").status_code == 404
+    assert http.get("/schedules/99/closures").status_code == 404
 
 
 @pytest.mark.parametrize(

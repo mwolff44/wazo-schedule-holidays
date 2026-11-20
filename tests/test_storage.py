@@ -79,10 +79,11 @@ def test_closures_and_partial_hours_roundtrip(storage):
         start=datetime.datetime(2027, 11, 19, 12, 0),
         end=datetime.datetime(2027, 11, 20, 14, 0),
         label="Seminar",
+        id="abc",
     )
     managed = [
-        Desired(datetime.date(2027, 11, 19), "Seminar", "12:00", "23:59"),
-        Desired(datetime.date(2027, 11, 20), "Seminar", "00:00", "14:00"),
+        Desired(datetime.date(2027, 11, 19), "Seminar", "12:00", "23:59", "abc"),
+        Desired(datetime.date(2027, 11, 20), "Seminar", "00:00", "14:00", "abc"),
     ]
     storage.save(1, TENANT, config(closures=[seminar], managed=managed))
 
@@ -92,8 +93,14 @@ def test_closures_and_partial_hours_roundtrip(storage):
     assert loaded.managed == managed
     raw = json.loads(storage.path(1).read_text())
     assert raw["closures"] == [
-        {"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": "Seminar"}
+        {
+            "id": "abc",
+            "start": "2027-11-19T12:00",
+            "end": "2027-11-20T14:00",
+            "label": "Seminar",
+        }
     ]
+    assert raw["managed"][0]["closure_id"] == "abc"
 
 
 def test_file_written_before_closures_existed_is_still_valid(storage):
@@ -197,7 +204,8 @@ def test_failed_write_keeps_previous_content_and_leaves_no_temp_file(
         {"version": 2, "tenant_uuid": TENANT, "country": "NL"},
         {"tenant_uuid": TENANT, "country": "NL"},
         {"version": 1, "country": "NL"},
-        {"version": 1, "tenant_uuid": TENANT},
+        {"version": 1, "tenant_uuid": TENANT, "country": ""},
+        {"version": 1, "tenant_uuid": TENANT, "country": 3},
         {"version": 1, "tenant_uuid": TENANT, "country": "NL", "excluded": "x"},
         {"version": 1, "tenant_uuid": TENANT, "country": "NL", "managed": [{}]},
         {
@@ -289,3 +297,24 @@ def test_lock_is_released_on_exit_and_on_error(storage):
 
     with other.lock(1, blocking=False):
         pass
+
+
+def test_a_config_without_country_holds_closures_only(storage):
+    seminar = Closure(
+        datetime.datetime(2027, 11, 19, 12), datetime.datetime(2027, 11, 20, 14), id="a"
+    )
+    storage.save(1, TENANT, HolidayConfig(closures=[seminar]))
+
+    loaded = storage.load(1, TENANT)
+
+    assert loaded.country is None and loaded.closures == [seminar]
+
+
+def test_a_closure_without_id_gets_a_stable_one(storage):
+    entry = {"start": "2027-11-19T12:00", "end": "2027-11-20T14:00", "label": "S"}
+    write_raw(storage, 1, {"version": 1, "tenant_uuid": TENANT, "closures": [entry]})
+
+    first = storage.load(1, TENANT).closures[0].id
+    second = storage.load(1, TENANT).closures[0].id
+
+    assert first and first == second

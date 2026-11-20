@@ -11,6 +11,7 @@ class ManagedHolidaySchema(BaseSchema):
     key = fields.String(dump_only=True)
     hours_start = fields.String(dump_only=True)
     hours_end = fields.String(dump_only=True)
+    closure_id = fields.String(dump_only=True, allow_none=True)
 
 
 class RemovedDaySchema(BaseSchema):
@@ -21,6 +22,7 @@ class RemovedDaySchema(BaseSchema):
 
 
 class ClosureSchema(BaseSchema):
+    id = fields.String(dump_only=True)
     # Naive local date-times (schedule timezone), minute precision.
     start = fields.DateTime(format="%Y-%m-%dT%H:%M", required=True)
     end = fields.DateTime(format="%Y-%m-%dT%H:%M", required=True)
@@ -36,9 +38,6 @@ class ScheduleHolidaysSchema(BaseSchema):
     )
     excluded = fields.List(
         fields.String(validate=Length(min=1, max=255)), load_default=list
-    )
-    closures = fields.List(
-        fields.Nested(ClosureSchema), load_default=list, validate=Length(max=100)
     )
     managed = fields.List(fields.Nested(ManagedHolidaySchema), dump_only=True)
 
@@ -66,3 +65,8 @@ class HolidaysQuerySchema(BaseSchema):
     subdivision = fields.String(validate=Length(min=1, max=32))
     year = fields.Integer(validate=Range(min=1900, max=2100))
     language = fields.String(load_default="en_US", validate=Length(min=2, max=16))
+
+
+class ClosureListSchema(BaseSchema):
+    total = fields.Integer(dump_only=True)
+    items = fields.List(fields.Nested(ClosureSchema), dump_only=True)

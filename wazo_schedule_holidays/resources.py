@@ -13,9 +13,16 @@ from xivo_dao.helpers import errors
 from xivo_dao.helpers.exception import InputError
 
 from . import holiday_calendar
-from .exceptions import ConfigNotFound, InvalidConfig, SyncInProgress
+from .exceptions import (
+    ClosureNotFound,
+    ConfigNotFound,
+    InvalidConfig,
+    SyncInProgress,
+)
 from .holiday_calendar import UnknownCountry, UnknownSubdivision
 from .schema import (
+    ClosureListSchema,
+    ClosureSchema,
     HolidaySchema,
     HolidaysQuerySchema,
     ScheduleHolidaysSchema,
@@ -23,7 +30,6 @@ from .schema import (
     ScheduleHolidaysSyncSchema,
 )
 from .storage import StorageError
-from .sync import Closure
 
 
 def _input_error(message):
@@ -39,6 +45,12 @@ def translate_errors(func):
             return func(*args, **kwargs)
         except ConfigNotFound as exc:
             raise errors.not_found("ScheduleHolidays", schedule_id=exc.schedule_id)
+        except ClosureNotFound as exc:
+            raise errors.not_found(
+                "ScheduleClosure",
+                schedule_id=exc.schedule_id,
+                closure_id=exc.closure_id,
+            )
         except (InvalidConfig, UnknownCountry, UnknownSubdivision) as exc:
             raise _input_error(str(exc))
         except SyncInProgress as exc:
@@ -119,7 +131,6 @@ class ScheduleHolidaysResource(_ScheduleResource):
             form["country"],
             form["subdivision"],
             form["excluded"],
-            [Closure(**item) for item in form["closures"]],
         )
         return "", 204
 
@@ -130,10 +141,8 @@ class ScheduleHolidaysResource(_ScheduleResource):
         return "", 204
 
 
-class ScheduleHolidaysSyncResource(_ScheduleResource):
-    @required_acl("confd.schedules.{id}.holidays.sync.create")
-    @translate_errors
-    def post(self, id):
+class _SyncResource(_ScheduleResource):
+    def _sync(self, id):
         query = ScheduleHolidaysSyncQuerySchema().load(request.args)
         result = self.service.sync(id, self._tenant_uuids(), dry_run=query["dry_run"])
         payload = {
@@ -148,3 +157,64 @@ class ScheduleHolidaysSyncResource(_ScheduleResource):
             "managed": result.managed,
         }
         return ScheduleHolidaysSyncSchema().dump(payload)
+
+
+class ScheduleExceptionalPeriodsSyncResource(_SyncResource):
+    @required_acl("confd.schedules.{id}.exceptional_periods.sync.create")
+    @translate_errors
+    def post(self, id):
+        return self._sync(id)
+
+
+class ScheduleHolidaysSyncResource(_SyncResource):
+    """Former route of the synchronisation, kept as an alias."""
+
+    @required_acl("confd.schedules.{id}.holidays.sync.create")
+    @translate_errors
+    def post(self, id):
+        return self._sync(id)
+
+
+class ScheduleClosuresResource(_ScheduleResource):
+    @required_acl("confd.schedules.{id}.closures.read")
+    @translate_errors
+    def get(self, id):
+        items = self.service.list_closures(id, self._tenant_uuids())
+        return ClosureListSchema().dump({"total": len(items), "items": items})
+
+    @required_acl("confd.schedules.{id}.closures.create")
+    @translate_errors
+    def post(self, id):
+        form = ClosureSchema().load(request.get_json(force=True))
+        closure = self.service.create_closure(
+            id, self._tenant_uuids(), form["start"], form["end"], form["label"]
+        )
+        return ClosureSchema().dump(closure), 201
+
+
+class ScheduleClosureResource(_ScheduleResource):
+    @required_acl("confd.schedules.{id}.closures.{closure_id}.read")
+    @translate_errors
+    def get(self, id, closure_id):
+        closure = self.service.get_closure(id, self._tenant_uuids(), closure_id)
+        return ClosureSchema().dump(closure)
+
+    @required_acl("confd.schedules.{id}.closures.{closure_id}.update")
+    @translate_errors
+    def put(self, id, closure_id):
+        form = ClosureSchema().load(request.get_json(force=True))
+        self.service.update_closure(
+            id,
+            self._tenant_uuids(),
+            closure_id,
+            form["start"],
+            form["end"],
+            form["label"],
+        )
+        return "", 204
+
+    @required_acl("confd.schedules.{id}.closures.{closure_id}.delete")
+    @translate_errors
+    def delete(self, id, closure_id):
+        self.service.delete_closure(id, self._tenant_uuids(), closure_id)
+        return "", 204
