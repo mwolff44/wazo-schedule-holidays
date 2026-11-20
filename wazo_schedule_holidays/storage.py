@@ -7,14 +7,17 @@ One file ``<directory>/<schedule_id>.json`` per schedule::
 
     {"version": 1, "tenant_uuid": "...", "country": "NL", "subdivision": null,
      "excluded": ["Good Friday"],
-     "closures": [{"start": "2027-11-19T12:00", "end": "2027-11-20T14:00",
-                   "label": "Seminar"}],
+     "closures": [{"id": "6f1c...", "start": "2027-11-19T12:00",
+                   "end": "2027-11-20T14:00", "label": "Seminar"}],
      "managed": [{"date": "2027-03-29", "key": "Easter Monday"},
-                 {"date": "2027-11-19", "key": "Seminar",
+                 {"date": "2027-11-19", "key": "Seminar", "closure_id": "6f1c...",
                   "hours_start": "12:00", "hours_end": "23:59"}]}
 
-``closures`` and the hours of ``managed`` entries are optional (files written
-before one-off closures existed are still valid; hours default to the full day).
+Holidays and closures are independent: ``country`` is null when the schedule only
+has closures, and ``closures`` is empty when it only has holidays (the file is
+deleted when it has neither). ``closures``, the closure ids and the hours of
+``managed`` entries are optional (older files stay valid: hours default to the full
+day, a closure without id gets a deterministic one).
 
 Writes are atomic (temporary file + ``os.replace``). ``lock`` serialises the
 read-modify-write cycles of the confd process and of the cron CLI with
@@ -31,6 +34,7 @@ import json
 import os
 import re
 import tempfile
+import uuid
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -53,7 +57,7 @@ class LockedError(StorageError):
 
 @dataclass
 class HolidayConfig:
-    country: str
+    country: str | None = None
     subdivision: str | None = None
     excluded: list[str] = field(default_factory=list)
     closures: list[Closure] = field(default_factory=list)
@@ -85,8 +89,8 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
     managed_raw = raw.get("managed", [])
     if not isinstance(tenant_uuid, str) or not tenant_uuid:
         raise StorageError("missing tenant_uuid")
-    if not isinstance(country, str) or not country:
-        raise StorageError("missing country")
+    if country is not None and (not isinstance(country, str) or not country):
+        raise StorageError("invalid country")
     if subdivision is not None and not isinstance(subdivision, str):
         raise StorageError("invalid subdivision")
     if not _is_str_list(excluded):
@@ -99,11 +103,14 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
     for entry in closures_raw:
         try:
             label = entry.get("label")
+            start = datetime.datetime.fromisoformat(entry["start"])
+            end = datetime.datetime.fromisoformat(entry["end"])
             closures.append(
                 Closure(
-                    start=datetime.datetime.fromisoformat(entry["start"]),
-                    end=datetime.datetime.fromisoformat(entry["end"]),
+                    start=start,
+                    end=end,
                     label=None if label is None else _require_str(label),
+                    id=_require_str(entry.get("id") or _closure_id(start, end, label)),
                 )
             )
         except (AttributeError, KeyError, TypeError, ValueError) as exc:
@@ -117,6 +124,7 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
                     key=_require_str(entry["key"]),
                     hours_start=_require_str(entry.get("hours_start", HOURS_START)),
                     hours_end=_require_str(entry.get("hours_end", HOURS_END)),
+                    closure_id=_optional_str(entry.get("closure_id")),
                 )
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -128,6 +136,16 @@ def _decode(raw: object) -> tuple[str, HolidayConfig]:
         closures=closures,
         managed=managed,
     )
+
+
+def _closure_id(start: datetime.datetime, end: datetime.datetime, label: object) -> str:
+    return str(
+        uuid.uuid5(uuid.NAMESPACE_URL, f"{start.isoformat()}/{end.isoformat()}/{label}")
+    )
+
+
+def _optional_str(value: object) -> str | None:
+    return None if value is None else _require_str(value)
 
 
 def _require_str(value: object) -> str:
@@ -145,6 +163,7 @@ def _encode(tenant_uuid: str, config: HolidayConfig) -> dict:
         "excluded": list(config.excluded),
         "closures": [
             {
+                "id": closure.id,
                 "start": closure.start.isoformat(timespec="minutes"),
                 "end": closure.end.isoformat(timespec="minutes"),
                 "label": closure.label,
@@ -157,6 +176,7 @@ def _encode(tenant_uuid: str, config: HolidayConfig) -> dict:
                 "key": entry.key,
                 "hours_start": entry.hours_start,
                 "hours_end": entry.hours_end,
+                **({"closure_id": entry.closure_id} if entry.closure_id else {}),
             }
             for entry in config.managed
         ],

@@ -6,6 +6,9 @@ from wazo_confd.plugins.schedule.service import build_service as build_schedule_
 from .resources import (
     CountriesResource,
     CountryHolidaysResource,
+    ScheduleClosureResource,
+    ScheduleClosuresResource,
+    ScheduleExceptionalPeriodsSyncResource,
     ScheduleHolidaysResource,
     ScheduleHolidaysSyncResource,
 )
@@ -31,5 +34,20 @@ class Plugin:
         api.add_resource(
             ScheduleHolidaysSyncResource,
             "/schedules/<int:id>/holidays/sync",
+            resource_class_args=(service,),
+        )
+        api.add_resource(
+            ScheduleExceptionalPeriodsSyncResource,
+            "/schedules/<int:id>/exceptional-periods/sync",
+            resource_class_args=(service,),
+        )
+        api.add_resource(
+            ScheduleClosuresResource,
+            "/schedules/<int:id>/closures",
+            resource_class_args=(service,),
+        )
+        api.add_resource(
+            ScheduleClosureResource,
+            "/schedules/<int:id>/closures/<string:closure_id>",
             resource_class_args=(service,),
         )

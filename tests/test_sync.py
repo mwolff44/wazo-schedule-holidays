@@ -478,3 +478,23 @@ def test_manual_period_identical_to_a_closure_slot_is_left_alone():
     plan = plan_sync([manual], [], desired, DEST)
 
     assert plan.add == [] and plan.remove == [] and plan.managed == []
+
+
+def test_without_country_only_the_closures_are_computed():
+    def provider(country, subdivision, year):
+        raise AssertionError("the calendar must not be read without a country")
+
+    only = closure((2026, 12, 1, 9, 0), (2026, 12, 1, 12, 0))
+
+    desired = compute_desired(None, None, [], D(2026, 11, 18), provider, [only])
+
+    assert slots(desired) == [(D(2026, 12, 1), "09:00", "12:00")]
+
+
+def test_closure_slots_carry_the_closure_id():
+    items = closure_slots(
+        Closure(DT(2027, 11, 19, 12), DT(2027, 11, 20, 14), "S", id="abc")
+    )
+
+    assert {item.closure_id for item in items} == {"abc"}
+    assert Desired(D(2027, 3, 29), "E").closure_id is None

@@ -78,7 +78,8 @@ paths:
       description: |
         **Required ACL:** `confd.schedules.{schedule_id}.holidays.update`
 
-        Only the configuration is stored: call the `sync` route to apply it.
+        Only the configuration is stored: call the `sync` route (or wait for the
+        daily synchronisation) to apply it. The closures are not affected.
       tags:
       - schedules
       parameters:
@@ -100,11 +101,12 @@ paths:
           description: The schedule is being updated by another request
     delete:
       operationId: delete_schedule_holidays
-      summary: Remove the configuration and the exceptional periods it created
+      summary: Remove the holidays configuration and the periods it created
       description: |
         **Required ACL:** `confd.schedules.{schedule_id}.holidays.delete`
 
-        Exceptional periods that were not created by the plugin are kept.
+        Exceptional periods that were not created by the plugin, and the
+        one-off closures, are kept.
       tags:
       - schedules
       parameters:
@@ -117,12 +119,12 @@ paths:
           $ref: '#/responses/NotFoundError'
         '409':
           description: The schedule is being updated by another request
-  /schedules/{schedule_id}/holidays/sync:
+  /schedules/{schedule_id}/exceptional-periods/sync:
     post:
-      operationId: sync_schedule_holidays
-      summary: Apply the holidays configuration to the schedule
+      operationId: sync_schedule_exceptional_periods
+      summary: Apply the holidays and the closures to the schedule
       description: |
-        **Required ACL:** `confd.schedules.{schedule_id}.holidays.sync.create`
+        **Required ACL:** `confd.schedules.{schedule_id}.exceptional_periods.sync.create`
 
         Creates one full-day exceptional period per holiday (and one period per
         day of each one-off closure) in the next 365 days, using the closed destination of the schedule, and removes the
@@ -148,7 +150,155 @@ paths:
           $ref: '#/responses/NotFoundError'
         '409':
           description: The schedule is being updated by another request
+  /schedules/{schedule_id}/holidays/sync:
+    post:
+      operationId: sync_schedule_holidays
+      summary: Alias of `exceptional-periods/sync`
+      description: |
+        **Required ACL:** `confd.schedules.{schedule_id}.holidays.sync.create`
+
+        Former route, kept as an alias (it applies the holidays *and* the closures).
+
+        Creates one full-day exceptional period per holiday (and one period per
+        day of each one-off closure) in the next 365 days, using the closed destination of the schedule, and removes the
+        periods created previously that are no longer wanted. wazo-agid ignores
+        the year of a period: the synchronisation must therefore run every day.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - name: dry_run
+        in: query
+        type: boolean
+        required: false
+        default: false
+        description: Compute the changes without applying them
+      responses:
+        '200':
+          description: Result of the synchronisation
+          schema:
+            $ref: '#/definitions/ScheduleHolidaysSync'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+  /schedules/{schedule_id}/closures:
+    get:
+      operationId: list_schedule_closures
+      summary: List the one-off closures of a schedule
+      description: '**Required ACL:** `confd.schedules.{schedule_id}.closures.read`'
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      responses:
+        '200':
+          description: Closures
+          schema:
+            $ref: '#/definitions/ScheduleClosureList'
+        '404':
+          $ref: '#/responses/NotFoundError'
+    post:
+      operationId: create_schedule_closure
+      summary: Create a one-off closure and apply it to the schedule
+      description: |
+        **Required ACL:** `confd.schedules.{schedule_id}.closures.create`
+
+        A closure does not need a holidays configuration. As an exceptional
+        period has no year and a single set of hours, a closure becomes one
+        period per day (e.g. 12:00-23:59, then 00:00-14:00): the periods are
+        created once the date is within the next 365 days and removed once it is
+        past. The schedule is synchronised immediately. At most 100 closures,
+        each spanning at most 366 days.
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/ScheduleClosure'
+      responses:
+        '201':
+          description: The created closure
+          schema:
+            $ref: '#/definitions/ScheduleClosure'
+        '400':
+          $ref: '#/responses/CreateError'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+  /schedules/{schedule_id}/closures/{closure_id}:
+    get:
+      operationId: get_schedule_closure
+      summary: Get a one-off closure
+      description: '**Required ACL:** `confd.schedules.{schedule_id}.closures.{closure_id}.read`'
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - $ref: '#/parameters/scheduleclosureid'
+      responses:
+        '200':
+          description: Closure
+          schema:
+            $ref: '#/definitions/ScheduleClosure'
+        '404':
+          $ref: '#/responses/NotFoundError'
+    put:
+      operationId: update_schedule_closure
+      summary: Replace a one-off closure and apply it to the schedule
+      description: '**Required ACL:** `confd.schedules.{schedule_id}.closures.{closure_id}.update`'
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - $ref: '#/parameters/scheduleclosureid'
+      - name: body
+        in: body
+        required: true
+        schema:
+          $ref: '#/definitions/ScheduleClosure'
+      responses:
+        '204':
+          $ref: '#/responses/ResourceUpdated'
+        '400':
+          $ref: '#/responses/UpdateError'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
+    delete:
+      operationId: delete_schedule_closure
+      summary: Delete a one-off closure and its periods
+      description: '**Required ACL:** `confd.schedules.{schedule_id}.closures.{closure_id}.delete`'
+      tags:
+      - schedules
+      parameters:
+      - $ref: '#/parameters/tenantuuid'
+      - $ref: '#/parameters/scheduleid'
+      - $ref: '#/parameters/scheduleclosureid'
+      responses:
+        '204':
+          $ref: '#/responses/ResourceDeleted'
+        '404':
+          $ref: '#/responses/NotFoundError'
+        '409':
+          description: The schedule is being updated by another request
 parameters:
+  scheduleclosureid:
+    required: true
+    type: string
+    name: closure_id
+    in: path
+    description: Identifier of the closure
   scheduleholidayscountrycode:
     required: true
     type: string
@@ -170,27 +320,27 @@ definitions:
         description: Keys of the holidays that must not close the schedule
         items:
           type: string
-      closures:
-        type: array
-        description: |
-          One-off closures (for instance a seminar). Replaced as a whole by
-          each `PUT` (omit it to remove them). Each closure becomes one
-          exceptional period per day, since a period has no year: the periods
-          are created once the date is within the next 365 days and removed once
-          it is past. Expired closures are ignored and can be removed by a `PUT`.
-          At most 100 closures, each spanning at most 366 days.
-        items:
-          $ref: '#/definitions/ScheduleHolidaysClosure'
       managed:
         type: array
         readOnly: true
-        description: Periods (holidays and closures) created by the plugin
+        description: Periods created by the plugin (holidays, and closures when listed here)
         items:
           $ref: '#/definitions/ScheduleHolidaysEntry'
     required:
     - country
-  ScheduleHolidaysClosure:
+  ScheduleClosureList:
     properties:
+      total:
+        type: integer
+      items:
+        type: array
+        items:
+          $ref: '#/definitions/ScheduleClosure'
+  ScheduleClosure:
+    properties:
+      id:
+        type: string
+        readOnly: true
       start:
         type: string
         example: '2027-11-19T12:00'
@@ -222,6 +372,9 @@ definitions:
       hours_end:
         type: string
         description: '`23:59` for a holiday; may differ for a closure'
+      closure_id:
+        type: string
+        description: Closure the period belongs to (absent for a holiday)
   ScheduleHolidaysSync:
     properties:
       dry_run:
