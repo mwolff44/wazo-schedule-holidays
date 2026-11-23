@@ -216,7 +216,12 @@ class ConfigStorage:
     def save(self, schedule_id: int, tenant_uuid: str, config: HolidayConfig) -> None:
         target = self.path(schedule_id)
         self.directory.mkdir(parents=True, exist_ok=True)
-        payload = json.dumps(_encode(tenant_uuid, config), indent=2, sort_keys=True)
+        payload = json.dumps(
+            _encode(tenant_uuid, config),
+            indent=2,
+            sort_keys=True,
+            ensure_ascii=False,
+        )
         handle = tempfile.NamedTemporaryFile(
             "w",
             encoding="utf-8",

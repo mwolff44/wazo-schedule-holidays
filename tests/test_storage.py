@@ -74,6 +74,19 @@ def test_saved_file_format(storage):
     }
 
 
+def test_non_ascii_label_is_written_as_utf8(storage):
+    seminar = Closure(
+        start=datetime.datetime(2027, 11, 19, 12, 0),
+        end=datetime.datetime(2027, 11, 20, 14, 0),
+        label="Séminaire",
+        id="abc",
+    )
+    storage.save(1, TENANT, config(closures=[seminar]))
+
+    assert "Séminaire" in storage.path(1).read_text(encoding="utf-8")
+    assert storage.load(1, TENANT).closures == [seminar]
+
+
 def test_closures_and_partial_hours_roundtrip(storage):
     seminar = Closure(
         start=datetime.datetime(2027, 11, 19, 12, 0),
