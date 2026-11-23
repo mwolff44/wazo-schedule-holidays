@@ -82,6 +82,11 @@ is removed once past. `end` is inclusive to the minute. At most 100 closures, ea
 366 days. Expired closures are ignored and can be deleted. `DELETE .../holidays` only removes the
 holidays: the closures are kept.
 
+> **A closure more than 365 days ahead is stored but not applied yet.** The `POST` succeeds and
+> `GET /closures` lists it, but the schedule has no matching exceptional period (a period has no
+> year, so it would fire every year). The daily cron applies it on the day it enters the 365-day
+> window. For instance, on 2026-11-23 a closure starting 2027-11-24 is applied from 2026-11-25.
+
 `PUT .../holidays` only stores the configuration; `sync` (or the daily cron) applies it. `DELETE
 .../holidays` also removes the periods created for the holidays. Errors: `400` invalid configuration, `404` unknown schedule (or other tenant) or no
 configuration, `409` the schedule is being updated by another request.
