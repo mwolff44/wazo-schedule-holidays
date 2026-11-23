@@ -40,7 +40,10 @@ Full reference: `GET /api/confd/1.1/api/api.yml` once the plugin is loaded.
 | `GET /schedules/{id}/holidays` | `confd.schedules.{id}.holidays.read` |
 | `PUT /schedules/{id}/holidays` | `confd.schedules.{id}.holidays.update` |
 | `DELETE /schedules/{id}/holidays` | `confd.schedules.{id}.holidays.delete` |
-| `POST /schedules/{id}/holidays/sync[?dry_run=true]` | `confd.schedules.{id}.holidays.sync.create` |
+| `POST /schedules/{id}/exceptional-periods/sync[?dry_run=true]` | `confd.schedules.{id}.exceptional_periods.sync.create` |
+| `POST /schedules/{id}/holidays/sync[?dry_run=true]` (alias of the previous one) | `confd.schedules.{id}.holidays.sync.create` |
+| `GET`, `POST /schedules/{id}/closures` | `confd.schedules.{id}.closures.read`, `.create` |
+| `GET`, `PUT`, `DELETE /schedules/{id}/closures/{closure_id}` | `confd.schedules.{id}.closures.{closure_id}.read`, `.update`, `.delete` |
 
 ```sh
 BASE=https://wazo.example.com/api/confd/1.1
@@ -58,24 +61,29 @@ curl -sk -X POST -H "$H" "$BASE/schedules/1/holidays/sync"
 
 ### One-off closures
 
-A closure is a date-time range in the schedule timezone, for instance a seminar from Thursday
+Closures are independent from the holidays: a schedule can have a country, closures, or both. A
+closure is a date-time range in the schedule timezone, for instance a seminar from Thursday
 19 November 2027 12:00 to Friday 20 November 2027 14:00 (or a single morning, 09:00 to 12:00):
 
 ```sh
-curl -sk -X PUT -H "$H" -H 'Content-Type: application/json' -d '{"country":"FR","subdivision":"6AE",
-  "closures":[{"start":"2027-11-19T12:00","end":"2027-11-20T14:00","label":"Seminar"}]}' \
-  "$BASE/schedules/1/holidays"
+curl -sk -X POST -H "$H" -H 'Content-Type: application/json' \
+  -d '{"start":"2027-11-19T12:00","end":"2027-11-20T14:00","label":"Seminar"}' \
+  "$BASE/schedules/1/closures"              # 201, returns the closure with its id
+curl -sk -H "$H" "$BASE/schedules/1/closures"
+curl -sk -X PUT -H "$H" -H 'Content-Type: application/json' \
+  -d '{"start":"2027-11-19T12:00","end":"2027-11-20T16:00"}' "$BASE/schedules/1/closures/$ID"
+curl -sk -X DELETE -H "$H" "$BASE/schedules/1/closures/$ID"
 ```
 
-Like the holidays, a closure is applied by `sync`: as a period has no year, it becomes one period
-per day (12:00-23:59, then 00:00-14:00, with full days in between) only when its date is within the
-next 365 days, and is removed once past. `end` is inclusive to the minute. `closures` is replaced as a
-whole by each `PUT` (omit it to remove them): `GET` first, then `PUT` the full list. Expired closures
-are ignored and can be dropped by a `PUT`. A country is still required (use `excluded` to skip
-unwanted holidays).
+Writing a closure **synchronises the schedule immediately**. As a period has no year, a closure
+becomes one period per day (12:00-23:59, then 00:00-14:00, with full days in between) only when its
+date is within the next 365 days (the daily cron adds the later ones as they come into range), and
+is removed once past. `end` is inclusive to the minute. At most 100 closures, each spanning at most
+366 days. Expired closures are ignored and can be deleted. `DELETE .../holidays` only removes the
+holidays: the closures are kept.
 
-`PUT` only stores the configuration; `sync` applies it. `DELETE` also removes the periods the plugin
-created. Errors: `400` invalid configuration, `404` unknown schedule (or other tenant) or no
+`PUT .../holidays` only stores the configuration; `sync` (or the daily cron) applies it. `DELETE
+.../holidays` also removes the periods created for the holidays. Errors: `400` invalid configuration, `404` unknown schedule (or other tenant) or no
 configuration, `409` the schedule is being updated by another request.
 
 ## Daily synchronisation

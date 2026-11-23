@@ -22,3 +22,10 @@ class SyncInProgress(HolidaysError):
     def __init__(self, schedule_id: int) -> None:
         super().__init__(f"schedule {schedule_id} is being updated, retry later")
         self.schedule_id = schedule_id
+
+
+class ClosureNotFound(HolidaysError):
+    def __init__(self, schedule_id: int, closure_id: str) -> None:
+        super().__init__(f"no closure {closure_id} for schedule {schedule_id}")
+        self.schedule_id = schedule_id
+        self.closure_id = closure_id

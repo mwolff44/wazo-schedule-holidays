@@ -3,6 +3,12 @@
 
 """Application service: applies the synchronisation plan to a schedule.
 
+Two independent features share one JSON file, one lock and one synchronisation
+(a schedule has a single set of exceptional periods): the *holidays* of a country
+and the one-off *closures*. Writing a closure synchronises the schedule at once;
+writing the holidays configuration only stores it (``sync`` or the daily cron
+applies it).
+
 Nothing is imported from Wazo: the confd schedule service, the period class
 (``xivo_dao`` ``ScheduleTime``) and the default timezone are injected by
 ``plugin.py``, which keeps this module testable in isolation.
@@ -20,12 +26,18 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 import datetime
+import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from typing import Any
 
 from . import holiday_calendar
-from .exceptions import ConfigNotFound, InvalidConfig, SyncInProgress
+from .exceptions import (
+    ClosureNotFound,
+    ConfigNotFound,
+    InvalidConfig,
+    SyncInProgress,
+)
 from .holiday_calendar import holidays_for
 from .storage import ConfigStorage, HolidayConfig, LockedError
 from .sync import (
@@ -89,7 +101,7 @@ class HolidaysService:
         self, schedule_id: int, tenant_uuids: list[str] | None
     ) -> HolidayConfig:
         schedule = self._schedule(schedule_id, tenant_uuids)
-        return self._config(schedule)
+        return self._holidays_config(schedule)
 
     def update_config(
         self,
@@ -98,35 +110,124 @@ class HolidaysService:
         country: str,
         subdivision: str | None,
         excluded: Iterable[str],
-        closures: Iterable[Closure] = (),
     ) -> HolidayConfig:
         schedule = self._schedule(schedule_id, tenant_uuids)
         excluded = list(dict.fromkeys(excluded))
-        closures = list(closures)
         self._validate(schedule, country, subdivision, excluded)
-        self._validate_closures(closures)
         with self._locked(schedule_id):
             previous = self._storage.load(schedule_id, schedule.tenant_uuid)
-            config = HolidayConfig(
+            config = dataclasses.replace(
+                previous or HolidayConfig(),
                 country=country,
                 subdivision=subdivision,
                 excluded=excluded,
-                closures=closures,
-                managed=previous.managed if previous else [],
             )
             self._storage.save(schedule_id, schedule.tenant_uuid, config)
             return config
 
     def delete_config(self, schedule_id: int, tenant_uuids: list[str] | None) -> None:
+        """Remove the holidays (and their periods); the closures are kept."""
         schedule = self._schedule(schedule_id, tenant_uuids)
         with self._locked(schedule_id):
-            config = self._config(schedule)
-            existing = list(schedule.exceptional_periods)
-            destination = Destination.from_schedule(schedule)
-            plan = plan_sync(existing, config.managed, [], destination)
-            if plan.remove:
-                self._write_periods(schedule, existing, plan, destination)
-                self._commit()
+            config = dataclasses.replace(
+                self._holidays_config(schedule),
+                country=None,
+                subdivision=None,
+                excluded=[],
+            )
+            tenant_uuid = schedule.tenant_uuid
+            self._storage.save(schedule_id, tenant_uuid, config)
+            self._sync(schedule, config, dry_run=False)
+            self._drop_if_empty(schedule_id, config)
+
+    def list_closures(
+        self, schedule_id: int, tenant_uuids: list[str] | None
+    ) -> list[Closure]:
+        schedule = self._schedule(schedule_id, tenant_uuids)
+        config = self._storage.load(schedule_id, schedule.tenant_uuid)
+        return list(config.closures) if config else []
+
+    def get_closure(
+        self, schedule_id: int, tenant_uuids: list[str] | None, closure_id: str
+    ) -> Closure:
+        for closure in self.list_closures(schedule_id, tenant_uuids):
+            if closure.id == closure_id:
+                return closure
+        raise ClosureNotFound(schedule_id, closure_id)
+
+    def create_closure(
+        self,
+        schedule_id: int,
+        tenant_uuids: list[str] | None,
+        start: datetime.datetime,
+        end: datetime.datetime,
+        label: str | None = None,
+    ) -> Closure:
+        closure = Closure(start, end, label, id=str(uuid.uuid4()))
+        self._write_closures(
+            schedule_id, tenant_uuids, lambda closures: [*closures, closure]
+        )
+        return closure
+
+    def update_closure(
+        self,
+        schedule_id: int,
+        tenant_uuids: list[str] | None,
+        closure_id: str,
+        start: datetime.datetime,
+        end: datetime.datetime,
+        label: str | None = None,
+    ) -> Closure:
+        closure = Closure(start, end, label, id=closure_id)
+
+        def replace(closures: list[Closure]) -> list[Closure]:
+            self._find(schedule_id, closures, closure_id)
+            return [closure if c.id == closure_id else c for c in closures]
+
+        self._write_closures(schedule_id, tenant_uuids, replace)
+        return closure
+
+    def delete_closure(
+        self, schedule_id: int, tenant_uuids: list[str] | None, closure_id: str
+    ) -> None:
+        def remove(closures: list[Closure]) -> list[Closure]:
+            self._find(schedule_id, closures, closure_id)
+            return [c for c in closures if c.id != closure_id]
+
+        self._write_closures(schedule_id, tenant_uuids, remove)
+
+    def _write_closures(
+        self,
+        schedule_id: int,
+        tenant_uuids: list[str] | None,
+        change: Callable[[list[Closure]], list[Closure]],
+    ) -> None:
+        """Store the new list of closures, then synchronise the schedule.
+
+        If the synchronisation fails the closures stay stored: the daily cron
+        retries (the managed periods are tracked as for any other sync).
+        """
+        schedule = self._schedule(schedule_id, tenant_uuids)
+        with self._locked(schedule_id):
+            config = self._storage.load(schedule_id, schedule.tenant_uuid)
+            config = config or HolidayConfig()
+            closures = change(list(config.closures))
+            self._validate_closures(closures)
+            config = dataclasses.replace(config, closures=closures)
+            tenant_uuid = schedule.tenant_uuid
+            self._storage.save(schedule_id, tenant_uuid, config)
+            self._sync(schedule, config, dry_run=False)
+            self._drop_if_empty(schedule_id, config)
+
+    @staticmethod
+    def _find(schedule_id: int, closures: list[Closure], closure_id: str) -> Closure:
+        for closure in closures:
+            if closure.id == closure_id:
+                return closure
+        raise ClosureNotFound(schedule_id, closure_id)
+
+    def _drop_if_empty(self, schedule_id: int, config: HolidayConfig) -> None:
+        if config.country is None and not config.closures:
             self._storage.delete(schedule_id)
 
     def sync(
@@ -204,6 +305,12 @@ class HolidaysService:
             raise ConfigNotFound(schedule.id)
         return config
 
+    def _holidays_config(self, schedule: Any) -> HolidayConfig:
+        config = self._config(schedule)
+        if config.country is None:
+            raise ConfigNotFound(schedule.id)
+        return config
+
     def _timezone(self, schedule: Any) -> str | None:
         return schedule.timezone or self._default_timezone()
 
@@ -257,7 +364,8 @@ class HolidaysService:
                 raise InvalidConfig(
                     "closures", f"a closure spans at most {MAX_CLOSURE_DAYS} days"
                 )
-        if len(set(closures)) != len(closures):
+        contents = {(c.start, c.end, c.label) for c in closures}
+        if len(contents) != len(closures):
             raise InvalidConfig("closures", "duplicate closure")
 
     @contextlib.contextmanager

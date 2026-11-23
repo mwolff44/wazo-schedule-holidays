@@ -7,6 +7,7 @@ import pytest
 
 from tests.fakes import FakePeriod, FakeScheduleService, NotFound, make_schedule
 from wazo_schedule_holidays.exceptions import (
+    ClosureNotFound,
     ConfigNotFound,
     InvalidConfig,
     SyncInProgress,
@@ -14,7 +15,7 @@ from wazo_schedule_holidays.exceptions import (
 from wazo_schedule_holidays.holiday_calendar import Holiday, holidays_for
 from wazo_schedule_holidays.service import HolidaysService
 from wazo_schedule_holidays.storage import ConfigStorage
-from wazo_schedule_holidays.sync import Closure, Desired
+from wazo_schedule_holidays.sync import Desired
 
 D = datetime.date
 TENANT = "11111111-1111-1111-1111-111111111111"
@@ -474,13 +475,11 @@ def test_no_commit_when_the_periods_do_not_change(env):
     assert env.commits == commits
 
 
-def closure(start, end, label=None):
-    return Closure(
-        start=datetime.datetime(*start), end=datetime.datetime(*end), label=label
-    )
+def when(*args):
+    return datetime.datetime(*args)
 
 
-SEMINAR = closure((2026, 11, 19, 12, 0), (2026, 11, 20, 14, 0), "Seminar")
+SEMINAR = (when(2026, 11, 19, 12, 0), when(2026, 11, 20, 14, 0), "Seminar")
 
 
 def hours(env):
@@ -490,67 +489,120 @@ def hours(env):
     )
 
 
-def test_update_config_stores_closures(env):
-    config = env.service.update_config(1, None, "NL", None, [], [SEMINAR])
+def test_create_closure_stores_it_and_synchronises_at_once(env):
+    closure = env.service.create_closure(1, None, *SEMINAR)
 
-    assert config.closures == [SEMINAR]
-    assert env.service.get_config(1, None).closures == [SEMINAR]
+    assert closure.id
+    assert env.service.get_closure(1, None, closure.id) == closure
+    assert env.service.list_closures(1, None) == [closure]
+    assert hours(env) == [
+        (11, 19, "12:00", "23:59"),
+        (11, 20, "00:00", "14:00"),
+    ]
+    assert env.storage.load(1, TENANT).country is None
+    assert {e.closure_id for e in env.storage.load(1, TENANT).managed} == {closure.id}
 
 
-def test_update_config_without_closures_clears_them(env):
-    env.service.update_config(1, None, "NL", None, [], [SEMINAR])
+def test_closures_do_not_need_a_holidays_configuration(env):
+    env.service.create_closure(1, None, *SEMINAR)
 
-    assert env.service.update_config(1, None, "NL", None, []).closures == []
+    with pytest.raises(ConfigNotFound):
+        env.service.get_config(1, None)
+    with pytest.raises(ConfigNotFound):
+        env.service.delete_config(1, None)
 
 
-def test_sync_creates_one_period_per_day_of_a_closure(env):
-    env.service.update_config(1, None, "NL", None, [], [SEMINAR])
+def test_list_closures_is_empty_without_configuration(env):
+    assert env.service.list_closures(1, None) == []
 
-    result = env.service.sync(1, None)
-    again = env.service.sync(1, None)
 
-    assert hours(env) == sorted(
-        [
-            (3, 29, "00:00", "23:59"),
-            (11, 18, "00:00", "23:59"),
-            (11, 19, "12:00", "23:59"),
-            (11, 20, "00:00", "14:00"),
-            (12, 25, "00:00", "23:59"),
-        ]
+def test_closures_and_holidays_are_independent(env):
+    closure = env.service.create_closure(1, None, *SEMINAR)
+    env.configure()
+    env.service.sync(1, None)
+
+    assert (3, 29, "00:00", "23:59") in hours(env)
+    assert (11, 19, "12:00", "23:59") in hours(env)
+
+    env.service.delete_config(1, None)
+
+    assert hours(env) == [(11, 19, "12:00", "23:59"), (11, 20, "00:00", "14:00")]
+    assert env.service.list_closures(1, None) == [closure]
+    with pytest.raises(ConfigNotFound):
+        env.service.get_config(1, None)
+
+    env.service.delete_closure(1, None, closure.id)
+
+    assert hours(env) == [] and env.storage.list_schedule_ids() == []
+
+
+def test_update_config_keeps_the_closures(env):
+    closure = env.service.create_closure(1, None, *SEMINAR)
+
+    config = env.service.update_config(1, None, "NL", None, [])
+
+    assert config.closures == [closure]
+
+
+def test_update_closure_replaces_its_periods(env):
+    closure = env.service.create_closure(1, None, *SEMINAR)
+
+    env.service.update_closure(
+        1, None, closure.id, when(2026, 12, 1, 9), when(2026, 12, 1, 12), "Inventory"
     )
-    assert result.removed == []
-    assert not again.changed
+
+    assert hours(env) == [(12, 1, "09:00", "12:00")]
+    assert env.service.get_closure(1, None, closure.id).label == "Inventory"
+
+
+def test_delete_closure_removes_its_periods_and_keeps_the_holidays(env):
+    env.configure()
+    env.service.sync(1, None)
+    closure = env.service.create_closure(1, None, *SEMINAR)
+
+    env.service.delete_closure(1, None, closure.id)
+
+    assert env.days() == [(3, 29), (11, 18), (12, 25)]
+    assert env.storage.load(1, TENANT).closures == []
+
+
+@pytest.mark.parametrize("action", ["get", "update", "delete"])
+def test_unknown_closure_id(env, action):
+    env.service.create_closure(1, None, *SEMINAR)
+    calls = {
+        "get": lambda: env.service.get_closure(1, None, "nope"),
+        "update": lambda: env.service.update_closure(1, None, "nope", *SEMINAR),
+        "delete": lambda: env.service.delete_closure(1, None, "nope"),
+    }
+
+    with pytest.raises(ClosureNotFound):
+        calls[action]()
+
+
+def test_closures_are_scoped_by_tenant(env):
+    env.service.create_closure(1, None, *SEMINAR)
+
+    with pytest.raises(NotFound):
+        env.service.list_closures(1, ["22222222-2222-2222-2222-222222222222"])
 
 
 def test_closure_periods_disappear_once_past(env):
-    env.service.update_config(1, None, "NL", None, [], [SEMINAR])
-    env.service.sync(1, None)
+    env.service.create_closure(1, None, *SEMINAR)
     env.today = D(2026, 11, 21)
 
     result = env.service.sync(1, None)
 
     assert (11, 19, "12:00", "23:59") in result.removed
     assert (11, 20, "00:00", "14:00") in result.removed
-    assert all(entry[:2] not in {(11, 19), (11, 20)} for entry in hours(env))
+    assert hours(env) == []
 
 
-def test_removing_a_closure_removes_its_periods(env):
-    env.service.update_config(1, None, "NL", None, [], [SEMINAR])
-    env.service.sync(1, None)
-    env.service.update_config(1, None, "NL", None, [])
-
-    env.service.sync(1, None)
-
-    assert env.days() == [(3, 29), (11, 18), (12, 25)]
-
-
-def test_manual_periods_survive_closures_and_config_deletion(env):
+def test_manual_periods_survive_closures_and_deletions(env):
     manual = manual_period(month_days=[19], months_list=[11])
     env.schedule.exceptional_periods = [manual]
-    env.service.update_config(1, None, "NL", None, [], [SEMINAR])
+    closure = env.service.create_closure(1, None, *SEMINAR)
 
-    env.service.sync(1, None)
-    env.service.delete_config(1, None)
+    env.service.delete_closure(1, None, closure.id)
 
     assert [
         (p.month_days, p.hours_start) for p in env.schedule.exceptional_periods
@@ -560,35 +612,51 @@ def test_manual_periods_survive_closures_and_config_deletion(env):
 @pytest.mark.parametrize(
     "bad",
     [
-        closure((2026, 11, 20, 14, 0), (2026, 11, 19, 12, 0)),
-        closure((2026, 11, 20, 14, 0), (2026, 11, 20, 14, 0)),
-        Closure(
-            datetime.datetime(2026, 11, 20, 14, 0, 30), datetime.datetime(2026, 11, 21)
-        ),
-        Closure(
+        (when(2026, 11, 20, 14), when(2026, 11, 19, 12), None),
+        (when(2026, 11, 20, 14), when(2026, 11, 20, 14), None),
+        (when(2026, 11, 20, 14, 0, 30), when(2026, 11, 21), None),
+        (
             datetime.datetime(2026, 11, 20, tzinfo=datetime.UTC),
             datetime.datetime(2026, 11, 21, tzinfo=datetime.UTC),
+            None,
         ),
-        closure((2026, 1, 1, 0, 0), (2027, 1, 2, 0, 0)),
+        (when(2026, 1, 1), when(2027, 1, 2), None),
     ],
 )
-def test_invalid_closures_are_rejected(env, bad):
+def test_invalid_closures_are_rejected_and_nothing_is_written(env, bad):
     with pytest.raises(InvalidConfig) as error:
-        env.service.update_config(1, None, "NL", None, [], [bad])
+        env.service.create_closure(1, None, *bad)
 
     assert error.value.field == "closures"
-    assert env.storage.list_schedule_ids() == []
+    assert env.storage.list_schedule_ids() == [] and env.schedules.edits == []
 
 
-def test_duplicate_and_too_many_closures_are_rejected(env):
+def test_duplicate_closure_is_rejected(env):
+    env.service.create_closure(1, None, *SEMINAR)
+
     with pytest.raises(InvalidConfig):
-        env.service.update_config(1, None, "NL", None, [], [SEMINAR, SEMINAR])
-    many = [
-        closure((2026, 12, 1, 9, 0), (2026, 12, 1, 9, minute))
-        for minute in range(1, 60)
-    ] + [
-        closure((2026, 12, 2, 9, 0), (2026, 12, 2, 9, minute))
-        for minute in range(1, 60)
-    ]
+        env.service.create_closure(1, None, *SEMINAR)
+
+
+def test_too_many_closures_are_rejected(env):
+    for day in range(1, 101):
+        env.service.create_closure(
+            1,
+            None,
+            when(2026, 12, 1, 9, 0) + datetime.timedelta(days=0, minutes=day),
+            when(2026, 12, 1, 10, 0) + datetime.timedelta(minutes=day),
+        )
+
     with pytest.raises(InvalidConfig):
-        env.service.update_config(1, None, "NL", None, [], many)
+        env.service.create_closure(1, None, when(2026, 12, 2, 9), when(2026, 12, 2, 10))
+
+
+def test_failed_sync_keeps_the_closure_stored(env):
+    env.fail_commit = RuntimeError("commit failed")
+
+    with pytest.raises(RuntimeError):
+        env.service.create_closure(1, None, *SEMINAR)
+    env.fail_commit = None
+    env.service.sync(1, None)
+
+    assert hours(env) == [(11, 19, "12:00", "23:59"), (11, 20, "00:00", "14:00")]

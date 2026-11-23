@@ -79,6 +79,7 @@ class Closure:
     start: datetime.datetime
     end: datetime.datetime
     label: str | None = None
+    id: str = ""
 
 
 @dataclass(frozen=True)
@@ -87,6 +88,7 @@ class Desired:
     key: str
     hours_start: str = HOURS_START
     hours_end: str = HOURS_END
+    closure_id: str | None = None  # set for the slots of a closure, None for holidays
 
     @property
     def slot(self) -> Slot:
@@ -129,12 +131,12 @@ def closure_slots(closure: Closure) -> list[Desired]:
         hours_end = closure.end.strftime("%H:%M") if date == last else HOURS_END
         if date == last and date != first and hours_end == HOURS_START:
             continue  # the closure ends at midnight: nothing left on that day
-        entries.append(Desired(date, key, hours_start, hours_end))
+        entries.append(Desired(date, key, hours_start, hours_end, closure.id or None))
     return entries
 
 
 def compute_desired(
-    country: str,
+    country: str | None,
     subdivision: str | None,
     excluded: Iterable[str],
     today: datetime.date,
@@ -144,11 +146,12 @@ def compute_desired(
     end = today + datetime.timedelta(days=WINDOW_DAYS)
     excluded_keys = set(excluded)
     by_date: dict[datetime.date, str] = {}
-    for year in (today.year, today.year + 1):
-        for holiday in provider(country, subdivision, year):
-            if not today <= holiday.date < end or holiday.key in excluded_keys:
-                continue
-            by_date.setdefault(holiday.date, holiday.key)
+    if country:
+        for year in (today.year, today.year + 1):
+            for holiday in provider(country, subdivision, year):
+                if not today <= holiday.date < end or holiday.key in excluded_keys:
+                    continue
+                by_date.setdefault(holiday.date, holiday.key)
     by_slot = {
         item.slot: item
         for item in (Desired(date=date, key=key) for date, key in by_date.items())
