@@ -173,7 +173,7 @@ verrou et une seule synchro (un schedule n'a qu'un jeu de périodes exceptionnel
 - [x] Phase 4 : stockage JSON, écriture atomique, `flock` (`storage.py`)
 - [x] Phase 5 : API confd (resources, schémas, service, `api.yml`), testée par des tests de contrat contre confd/xivo-dao 26.10 (sans DB ni auth réelles)
 - [x] Phase 6 : CLI + `cron.d` (`runner.py`, `wiring.py`, `cli.py`), testés unitairement et par contrat contre confd/xivo-dao 26.10
-- [~] Phase 7 : README et checklist écrits ; bout en bout validé sur stack 26.10 pour la France métropolitaine ; reste à valider : cron, désinstallation, Moselle, multi-tenant (voir « Constats sur une stack »)
+- [x] Phase 7 : README et checklist écrits ; bout en bout validé sur une stack 26.10 (fériés, fermetures, cron, désinstallation, Moselle, multi-tenant, changement de pays ; voir « Constats sur une stack »)
 
 ## Décisions de la phase 5
 - Le service est injecté (service schedule de confd, `ScheduleTime`, fuseau par défaut, `commit`) : il reste testable sans Wazo.
@@ -226,7 +226,8 @@ Test sur un schedule `Europe/Paris` avec une destination de fermeture `sound` et
 - **Mise à jour** : réinstallation par-dessus une version déjà installée OK.
 - **CLI** : `python3 -m wazo_schedule_holidays --dry-run` OK (`0 synchronised` sans configuration, puis avec).
 
-### Reste à valider sur la stack
-- **Cron** : le 2026-11-19, `/etc/cron.d/wazo-schedule-holidays` appartenait à `wazo-plugind` (`-rw-r--r--`) et cron l'a ignoré (cron exige root). Correctif : `rules install` fait `chown root:root` + `chmod 644`. À revalider après réinstallation (propriétaire root, première exécution réelle 04:07).
-- **Désinstallation** : non testée (`rules uninstall` conserve volontairement les JSON).
-- Moselle (`57`), plusieurs tenants, et changement de pays sur un schedule déjà synchronisé.
+### Validé ensuite sur la stack (retours de l'auteur, 2026-11-23)
+- **Cron** : `/etc/cron.d/wazo-schedule-holidays` est maintenant pris en compte (correctif `chown root:root` + `chmod 644` dans `rules install`).
+- **Désinstallation** : OK, les JSON sont conservés.
+- **Fermetures ponctuelles** : `POST`/`GET` OK ; une fermeture dans la fenêtre de 365 jours produit les périodes. Hors fenêtre, elle reste stockée et n'est posée par le cron qu'à son entrée dans la fenêtre (comportement voulu, pas de période sans année).
+- **Moselle** (`57`), **plusieurs tenants** et **changement de pays** sur un schedule déjà synchronisé : OK.
